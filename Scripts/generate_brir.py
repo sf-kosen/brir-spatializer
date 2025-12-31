@@ -20,7 +20,7 @@ DEFAULT_SOFA_PATH = os.path.join(
 
 
 def apply_low_shelf(signal, sample_rate, freq_hz=80.0, gain_db=5.0, q=0.707):
-    # RBJ low-shelf biquad, modest boost for cinema-style low end.
+    # RBJ low-shelf biquad, modest low-end lift.
     if abs(gain_db) < 1e-6:
         return signal
     a = 10 ** (gain_db / 40.0)
@@ -430,7 +430,7 @@ def select_hrir(sofa_data, dir_vec):
     return sofa_data["hrir_l"][idx], sofa_data["hrir_r"][idx]
 
 
-def build_cinema_profile():
+def build_layout_7_1_4_profile():
     grid_rows = 5
     grid_cols = 5
     fs = 48000
@@ -488,7 +488,7 @@ def build_cinema_profile():
     seat_y_max = room_dim[1] * 0.75
 
     return {
-        "name": "cinema",
+        "name": "layout_7_1_4",
         "grid_rows": grid_rows,
         "grid_cols": grid_cols,
         "fs": fs,
@@ -529,7 +529,7 @@ def build_cinema_profile():
     }
 
 
-def build_live_budokan_profile():
+def build_layout_lr_sub_profile():
     grid_rows = 5
     grid_cols = 5
     fs = 48000
@@ -575,7 +575,7 @@ def build_live_budokan_profile():
     }
 
     return {
-        "name": "live_budokan",
+        "name": "layout_lr_sub",
         "grid_rows": grid_rows,
         "grid_cols": grid_cols,
         "fs": fs,
@@ -616,7 +616,7 @@ def build_live_budokan_profile():
     }
 
 
-def build_live_k_arena_profile():
+def build_array_main_delay_profile():
     grid_rows = 5
     grid_cols = 5
     fs = 48000
@@ -723,7 +723,7 @@ def build_live_k_arena_profile():
     mix_both = {name for name, pos in speakers_local.items() if pos[0] == 0}
 
     return {
-        "name": "live_k_arena",
+        "name": "array_main_delay",
         "grid_rows": grid_rows,
         "grid_cols": grid_cols,
         "fs": fs,
@@ -766,12 +766,12 @@ def build_live_k_arena_profile():
 
 
 def get_profile(profile_name):
-    if profile_name == "cinema":
-        return build_cinema_profile()
-    if profile_name == "live_budokan":
-        return build_live_budokan_profile()
-    if profile_name == "live_k_arena":
-        return build_live_k_arena_profile()
+    if profile_name == "layout_7_1_4":
+        return build_layout_7_1_4_profile()
+    if profile_name == "layout_lr_sub":
+        return build_layout_lr_sub_profile()
+    if profile_name == "array_main_delay":
+        return build_array_main_delay_profile()
     raise ValueError(f"Unknown profile: {profile_name}")
 
 
@@ -781,7 +781,7 @@ def resolve_output_dirs(output_root, profile_name, grid_rows, grid_cols):
     return per_speaker, grid
 
 
-def generate_brir(profile_name="cinema", output_root=None, sofa_path=None, generate_per_speaker=None, generate_grid=None):
+def generate_brir(profile_name="layout_7_1_4", output_root=None, sofa_path=None, generate_per_speaker=None, generate_grid=None):
     profile = get_profile(profile_name)
 
     grid_rows = profile["grid_rows"]
@@ -924,7 +924,11 @@ def generate_brir(profile_name="cinema", output_root=None, sofa_path=None, gener
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--profile", default="cinema", choices=["cinema", "live_budokan", "live_k_arena"])
+    parser.add_argument(
+        "--profile",
+        default="layout_7_1_4",
+        choices=["layout_7_1_4", "layout_lr_sub", "array_main_delay"]
+    )
     parser.add_argument("--output-root", default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--sofa-path", default=None)
     parser.add_argument("--no-speakers", action="store_true")
