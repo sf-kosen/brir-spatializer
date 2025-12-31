@@ -1,0 +1,283 @@
+<Window x:Class="BrirSpatializer.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:BrirSpatializer.App"
+        mc:Ignorable="d"
+        Title="BRIR Spatializer" Height="760" Width="900"
+        WindowStartupLocation="CenterScreen">
+    <Window.Resources>
+        <local:BooleanToStartStopConverter x:Key="StartStopConverter" />
+        <local:DbToNeedleAngleConverter x:Key="DbToNeedleAngleConverter" />
+        <local:DbToBarHeightConverter x:Key="DbToBarHeightConverter" />
+    </Window.Resources>
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Grid.Row="0" Grid.ColumnSpan="2" Text="BRIR Spatializer (v0.1.4)" FontSize="18" FontWeight="SemiBold" />
+
+        <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,12,12,0">
+            <TextBlock Text="Input Device" Margin="0,0,0,4" />
+            <ComboBox ItemsSource="{Binding InputDevices}" SelectedItem="{Binding SelectedInput}" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,12,0,0">
+            <TextBlock Text="Output Device" Margin="0,0,0,4" />
+            <ComboBox ItemsSource="{Binding OutputDevices}" SelectedItem="{Binding SelectedOutput}" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,16,0,0" VerticalAlignment="Center">
+            <Button Width="120" Height="32" Content="{Binding IsRunning, Converter={StaticResource StartStopConverter}}" Click="StartStop_Click" />
+            <Button Width="120" Height="32" Margin="12,0,0,0" Content="Load Preset" Click="LoadPreset_Click" />
+            <Button Width="120" Height="32" Margin="8,0,0,0" Content="Save Preset" Click="SavePreset_Click" />
+            <CheckBox Content="Bypass" IsChecked="{Binding Bypass}" Margin="16,0,0,0" VerticalAlignment="Center" />
+            <CheckBox Content="Volume Match" IsChecked="{Binding VolumeMatch}" Margin="16,0,0,0" VerticalAlignment="Center" />
+            <ComboBox Width="90" Margin="16,0,0,0" ItemsSource="{Binding ActiveSlots}" SelectedItem="{Binding ActiveSlot}" />
+        </StackPanel>
+
+        <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Margin="0,16,0,0">
+            <TextBlock Text="{Binding StatusText}" />
+            <TextBlock Text="{Binding MeterText}" Margin="0,4,0,0" />
+        </StackPanel>
+
+        <Grid Grid.Row="4" Grid.ColumnSpan="2" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <GroupBox Header="Slot A BRIR" Grid.Column="0" Margin="0,0,8,0">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <CheckBox Grid.Row="0" Grid.ColumnSpan="3" Content="Enable BRIR" IsChecked="{Binding SlotABrirEnabled}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Path" Margin="0,6,8,0" VerticalAlignment="Center" />
+                    <TextBox Grid.Row="1" Grid.Column="1" Margin="0,6,8,0" Text="{Binding SlotABrirPath}" />
+                    <Button Grid.Row="1" Grid.Column="2" Margin="0,6,0,0" Content="Browse" Click="BrowseBrirA_Click" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Normalize" Margin="0,6,8,0" VerticalAlignment="Center" />
+                    <ComboBox Grid.Row="2" Grid.Column="1" Margin="0,6,8,0" ItemsSource="{Binding NormalizeModes}" SelectedItem="{Binding SlotANormalizeMode}" />
+                    <StackPanel Grid.Row="2" Grid.Column="2" Orientation="Vertical" Margin="0,6,0,0">
+                        <Button Content="Apply" Click="ApplyBrirA_Click" />
+                        <Button Margin="0,6,0,0" Content="Load Set" Click="LoadSetA_Click" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="3" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Peak dBFS" VerticalAlignment="Center" />
+                        <TextBox Width="60" Margin="8,0,0,0" Text="{Binding SlotATargetPeakDbFs}" />
+                        <TextBlock Text="RMS dBFS" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        <TextBox Width="60" Margin="8,0,0,0" Text="{Binding SlotATargetRmsDbFs}" />
+                        <TextBlock Text="SeatX" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        <Slider Width="80" Minimum="0" Maximum="1" Value="{Binding SlotASeatX}" Margin="8,0,0,0" />
+                        <TextBlock Text="SeatY" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        <Slider Width="80" Minimum="0" Maximum="1" Value="{Binding SlotASeatY}" Margin="8,0,0,0" />
+                        <TextBlock Text="Rows" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        <TextBox Width="40" Margin="8,0,0,0" Text="{Binding SlotARows}" />
+                        <TextBlock Text="Cols" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        <TextBox Width="40" Margin="8,0,0,0" Text="{Binding SlotACols}" />
+                        <Button Content="Apply Seat" Margin="12,0,0,0" Click="ApplySeatA_Click" />
+                    </StackPanel>
+                </Grid>
+            </GroupBox>
+
+            <GroupBox Header="Slot B BRIR" Grid.Column="1" Margin="8,0,0,0">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <CheckBox Grid.Row="0" Grid.ColumnSpan="3" Content="Enable BRIR" IsChecked="{Binding SlotBBrirEnabled}" />
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Path" Margin="0,6,8,0" VerticalAlignment="Center" />
+                    <TextBox Grid.Row="1" Grid.Column="1" Margin="0,6,8,0" Text="{Binding SlotBBrirPath}" />
+                    <Button Grid.Row="1" Grid.Column="2" Margin="0,6,0,0" Content="Browse" Click="BrowseBrirB_Click" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Text="Normalize" Margin="0,6,8,0" VerticalAlignment="Center" />
+                    <ComboBox Grid.Row="2" Grid.Column="1" Margin="0,6,8,0" ItemsSource="{Binding NormalizeModes}" SelectedItem="{Binding SlotBNormalizeMode}" />
+                    <StackPanel Grid.Row="2" Grid.Column="2" Orientation="Vertical" Margin="0,6,0,0">
+                        <Button Content="Apply" Click="ApplyBrirB_Click" />
+                        <Button Margin="0,6,0,0" Content="Load Set" Click="LoadSetB_Click" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="3" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,6,0,0">
+                        <TextBlock Text="Peak dBFS" VerticalAlignment="Center" />
+                        <TextBox Width="60" Margin="8,0,0,0" Text="{Binding SlotBTargetPeakDbFs}" />
+                        <TextBlock Text="RMS dBFS" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        <TextBox Width="60" Margin="8,0,0,0" Text="{Binding SlotBTargetRmsDbFs}" />
+                        <TextBlock Text="SeatX" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        <Slider Width="80" Minimum="0" Maximum="1" Value="{Binding SlotBSeatX}" Margin="8,0,0,0" />
+                        <TextBlock Text="SeatY" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        <Slider Width="80" Minimum="0" Maximum="1" Value="{Binding SlotBSeatY}" Margin="8,0,0,0" />
+                        <TextBlock Text="Rows" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        <TextBox Width="40" Margin="8,0,0,0" Text="{Binding SlotBRows}" />
+                        <TextBlock Text="Cols" Margin="12,0,0,0" VerticalAlignment="Center" />
+                        <TextBox Width="40" Margin="8,0,0,0" Text="{Binding SlotBCols}" />
+                        <Button Content="Apply Seat" Margin="12,0,0,0" Click="ApplySeatB_Click" />
+                    </StackPanel>
+                </Grid>
+            </GroupBox>
+        </Grid>
+
+        <GroupBox Grid.Row="5" Grid.ColumnSpan="2" Header="Meters" Margin="0,16,0,0">
+            <Grid Margin="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="3*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Spectrum (1/3 Octave)" Margin="0,0,0,6" />
+                    <Border Height="140" BorderBrush="#444" BorderThickness="1" Padding="6">
+                        <ItemsControl ItemsSource="{Binding SpectrumBands}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Columns="31" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="#68C0FF" Margin="1,0,1,0" VerticalAlignment="Bottom"
+                                            Height="{Binding Converter={StaticResource DbToBarHeightConverter}, ConverterParameter=120}" />
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Border>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Margin="16,0,0,0">
+                    <TextBlock Text="Analog VU" Margin="0,0,0,6" />
+                    <Border Height="140" BorderBrush="#444" BorderThickness="1" Padding="6">
+                        <Viewbox>
+                            <Canvas Width="200" Height="120">
+                                <Path Stroke="#777" StrokeThickness="2">
+                                    <Path.Data>
+                                        <PathGeometry>
+                                            <PathFigure StartPoint="55.00,46.38">
+                                                <ArcSegment Point="123.94,34.22" Size="70,70" SweepDirection="Clockwise" />
+                                            </PathFigure>
+                                        </PathGeometry>
+                                    </Path.Data>
+                                </Path>
+
+                                <Path Stroke="#D85C5C" StrokeThickness="4">
+                                    <Path.Data>
+                                        <PathGeometry>
+                                            <PathFigure StartPoint="117.86,32.32">
+                                                <ArcSegment Point="123.94,34.22" Size="70,70" SweepDirection="Clockwise" />
+                                            </PathFigure>
+                                        </PathGeometry>
+                                    </Path.Data>
+                                </Path>
+
+                                <ItemsControl ItemsSource="{Binding VUTicks}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Canvas>
+                                                <Line X1="100" Y1="{Binding StartY}" X2="100" Y2="{Binding EndY}" Stroke="#DDD" StrokeThickness="1">
+                                                    <Line.RenderTransform>
+                                                        <RotateTransform Angle="{Binding AngleDeg}" CenterX="100" CenterY="100" />
+                                                    </Line.RenderTransform>
+                                                    <Line.Style>
+                                                        <Style TargetType="Line">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsMajor}" Value="True">
+                                                                    <Setter Property="StrokeThickness" Value="1.5" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsZero}" Value="True">
+                                                                    <Setter Property="StrokeThickness" Value="2" />
+                                                                    <Setter Property="Stroke" Value="#FFF0A0" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsRed}" Value="True">
+                                                                    <Setter Property="Stroke" Value="#D85C5C" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Line.Style>
+                                                </Line>
+                                                <TextBlock Text="{Binding Label}" FontSize="9" Foreground="#DDD"
+                                                           Canvas.Left="{Binding LabelX}" Canvas.Top="{Binding LabelY}">
+                                                    <TextBlock.RenderTransform>
+                                                        <RotateTransform Angle="{Binding AngleDeg}" CenterX="0" CenterY="0" />
+                                                    </TextBlock.RenderTransform>
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsZero}" Value="True">
+                                                                    <Setter Property="FontWeight" Value="Bold" />
+                                                                    <Setter Property="Foreground" Value="#FFF0A0" />
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding IsRed}" Value="True">
+                                                                    <Setter Property="Foreground" Value="#D85C5C" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </Canvas>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <Line X1="100" Y1="100" X2="100" Y2="20" Stroke="#FFCC66" StrokeThickness="3">
+                                    <Line.RenderTransform>
+                                        <RotateTransform Angle="{Binding VuDb, Converter={StaticResource DbToNeedleAngleConverter}}" CenterX="100" CenterY="100" />
+                                    </Line.RenderTransform>
+                                </Line>
+                                <Ellipse Width="8" Height="8" Fill="#FFCC66" Canvas.Left="96" Canvas.Top="96" />
+                            </Canvas>
+                        </Viewbox>
+                    </Border>
+                    <TextBlock Text="{Binding VuDb, StringFormat=VU {0:F1}}" Margin="0,6,0,0" />
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Margin="16,0,0,0">
+                    <TextBlock Text="Digital Peak" Margin="0,0,0,6" />
+                    <Border Height="140" BorderBrush="#444" BorderThickness="1" Padding="6">
+                        <Grid>
+                            <ProgressBar Minimum="-60" Maximum="0" Value="{Binding TruePeakHoldDb, Mode=OneWay}" Height="20" VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <TextBlock Text="{Binding TruePeakHoldDb, StringFormat=TruePeak {0:F1} dBTP}" Margin="0,6,0,0" />
+                    <TextBlock Text="{Binding ClipCount, StringFormat=Clip {0}}" Margin="0,4,0,0" Foreground="#FF6666" />
+                </StackPanel>
+            </Grid>
+        </GroupBox>
+
+    </Grid>
+</Window>
+

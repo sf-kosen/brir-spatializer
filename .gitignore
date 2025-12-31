@@ -1,0 +1,27 @@
+# Build outputs
+**/bin/
+**/obj/
+**/publish/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime settings
+**/Settings/last_settings.json
+
+# Generated assets / external binaries
+Assets/
+Generated/
+ffmpeg.exe

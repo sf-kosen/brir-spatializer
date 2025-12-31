@@ -1,0 +1,5 @@
+pyroomacoustics
+numpy
+scipy
+soundfile
+sofar
