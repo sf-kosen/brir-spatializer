@@ -38,6 +38,8 @@ public sealed class AudioSettings
     public DriftCompensationMode DriftCompensationMode { get; set; } = DriftCompensationMode.Asrc;
     public int DriftTargetBufferMs { get; set; } = 60;
     public float LiveTrimDb { get; set; } = 0.0f;
+    public bool EnableSpectrumAnalysis { get; set; } = true;
+    public bool EnableLimiter { get; set; } = true;
     public StartupSettings Startup { get; set; } = new();
     public DriftAsrcSettings DriftAsrc { get; set; } = new();
     public DriftSlipSettings DriftSlip { get; set; } = new();

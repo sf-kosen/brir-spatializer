@@ -42,6 +42,8 @@ public sealed class AudioEngine : IDisposable
     {
         _settings = settings;
         _dspGraph.SetBlockSize(_settings.BlockSize);
+        _dspGraph.SpectrumEnabled = _settings.EnableSpectrumAnalysis;
+        _dspGraph.LimiterEnabled = _settings.EnableLimiter;
     }
 
     public bool IsRunning { get; private set; }
@@ -143,6 +145,9 @@ public sealed class AudioEngine : IDisposable
         }
 
         int dryDelaySamples = _dspGraph.GetDryAlignmentLatencySamples();
+        _dspGraph.SetBlockSize(_settings.BlockSize);
+        _dspGraph.SpectrumEnabled = _settings.EnableSpectrumAnalysis;
+        _dspGraph.LimiterEnabled = _settings.EnableLimiter;
         _dspGraph.SetDryDelaySamples(dryDelaySamples);
         _dspGraph.ApplyPendingDryDelaySamples();
 
@@ -501,6 +506,7 @@ public sealed class AudioEngine : IDisposable
                     IsBackground = true,
                     Name = "BrirStrictDspWorker"
                 };
+                _strictWorker.Priority = ThreadPriority.Highest;
                 _strictWorker.Start();
             }
         }

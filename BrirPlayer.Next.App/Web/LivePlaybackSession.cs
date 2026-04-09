@@ -170,8 +170,10 @@ internal sealed class LivePlaybackSession : IDisposable
         // so keep a larger steady buffer and avoid time-domain edits.
         _audioSettings.BlockSize = 2048;
         _audioSettings.DriftCompensationMode = DriftCompensationMode.Strict;
-        _audioSettings.DriftTargetBufferMs = Math.Max(400, preset.Audio.DriftTargetBufferMs);
+        _audioSettings.DriftTargetBufferMs = Math.Max(550, preset.Audio.DriftTargetBufferMs);
         _audioSettings.LiveTrimDb = -4.0f;
+        _audioSettings.EnableSpectrumAnalysis = false;
+        _audioSettings.EnableLimiter = true;
         _audioSettings.DriftSlip.HiWaterMs = Math.Max(_audioSettings.DriftTargetBufferMs + 120, preset.Audio.DriftSlip.HiWaterMs);
         _audioSettings.DriftSlip.LoWaterMs = Math.Min(_audioSettings.DriftTargetBufferMs - 80, Math.Max(120, preset.Audio.DriftSlip.LoWaterMs));
         _audioSettings.DriftSlip.XfadeMs = Math.Max(24, preset.Audio.DriftSlip.XfadeMs);

@@ -28,6 +28,9 @@ public sealed class DspGraph
     private int _pendingDryDelaySamples;
     private int _blockSize = 512;
 
+    public bool SpectrumEnabled { get; set; } = true;
+    public bool LimiterEnabled { get; set; } = true;
+
     public void UpdateControls(ControlSettings controls)
     {
         Volatile.Write(ref _xfadeMs, Math.Max(0, controls.XfadeMs));
@@ -125,8 +128,14 @@ public sealed class DspGraph
         }
 
         _metering.Update(buffer, frames, sampleRate);
-        _limiter.Process(buffer, frames, sampleRate);
-        _spectrum.Update(buffer, frames, sampleRate);
+        if (LimiterEnabled)
+        {
+            _limiter.Process(buffer, frames, sampleRate);
+        }
+        if (SpectrumEnabled)
+        {
+            _spectrum.Update(buffer, frames, sampleRate);
+        }
     }
 
     private void EnsureBuffers(int frames)
