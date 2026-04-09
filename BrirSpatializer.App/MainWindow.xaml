@@ -42,6 +42,7 @@
             <Button Width="120" Height="32" Content="{Binding IsRunning, Converter={StaticResource StartStopConverter}}" Click="StartStop_Click" />
             <Button Width="120" Height="32" Margin="12,0,0,0" Content="Load Preset" Click="LoadPreset_Click" />
             <Button Width="120" Height="32" Margin="8,0,0,0" Content="Save Preset" Click="SavePreset_Click" />
+            <Button Width="120" Height="32" Margin="8,0,0,0" Content="Convert File" Click="ExportWav_Click" />
             <CheckBox Content="Bypass" IsChecked="{Binding Bypass}" Margin="16,0,0,0" VerticalAlignment="Center" />
             <CheckBox Content="Volume Match" IsChecked="{Binding VolumeMatch}" Margin="16,0,0,0" VerticalAlignment="Center" />
             <ComboBox Width="90" Margin="16,0,0,0" ItemsSource="{Binding ActiveSlots}" SelectedItem="{Binding ActiveSlot}" />

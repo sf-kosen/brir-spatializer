@@ -1,6 +1,7 @@
 using System.Windows;
 using BrirSpatializer.Audio;
 using Microsoft.Win32;
+using System.IO;
 
 namespace BrirSpatializer.App;
 
@@ -47,6 +48,33 @@ public partial class MainWindow : Window
 
         if (dialog.ShowDialog(this) != true) return;
         _viewModel.SavePreset(dialog.FileName);
+    }
+
+    private void ExportWav_Click(object sender, RoutedEventArgs e)
+    {
+        var inputDialog = new OpenFileDialog
+        {
+            Filter = "Audio files (*.wav;*.flac;*.mp3;*.m4a)|*.wav;*.flac;*.mp3;*.m4a|All files (*.*)|*.*",
+            Title = "Select Input Audio"
+        };
+
+        if (inputDialog.ShowDialog(this) != true) return;
+
+        var outputDialog = new SaveFileDialog
+        {
+            Filter = "WAV files (*.wav)|*.wav",
+            Title = "Save Processed WAV",
+            FileName = Path.GetFileNameWithoutExtension(inputDialog.FileName) + "_spatialized.wav"
+        };
+
+        if (outputDialog.ShowDialog(this) != true) return;
+
+        bool ok = _viewModel.TryExportCurrentPreset(inputDialog.FileName, outputDialog.FileName, out string? message);
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            MessageBoxImage icon = ok ? MessageBoxImage.Information : MessageBoxImage.Warning;
+            MessageBox.Show(this, message, "Convert File", MessageBoxButton.OK, icon);
+        }
     }
 
     protected override void OnClosed(EventArgs e)

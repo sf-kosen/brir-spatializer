@@ -21,8 +21,8 @@ public sealed class DriftAsrcSettings
 {
     public double Kp { get; set; } = 0.00002;
     public double Ki { get; set; } = 0.0000005;
-    public double RMin { get; set; } = 0.9998;
-    public double RMax { get; set; } = 1.0002;
+    public double RMin { get; set; } = 0.995;
+    public double RMax { get; set; } = 1.005;
 }
 
 public sealed class DriftSlipSettings
@@ -37,6 +37,7 @@ public sealed class AudioSettings
     public int BlockSize { get; set; } = 512;
     public DriftCompensationMode DriftCompensationMode { get; set; } = DriftCompensationMode.Asrc;
     public int DriftTargetBufferMs { get; set; } = 60;
+    public float LiveTrimDb { get; set; } = 0.0f;
     public StartupSettings Startup { get; set; } = new();
     public DriftAsrcSettings DriftAsrc { get; set; } = new();
     public DriftSlipSettings DriftSlip { get; set; } = new();

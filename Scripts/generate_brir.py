@@ -6,6 +6,9 @@ import soundfile as sf
 import os
 from scipy.signal import fftconvolve
 import sofar
+import ctypes
+import shutil
+import tempfile
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
@@ -17,6 +20,83 @@ DEFAULT_SOFA_PATH = os.path.join(
     "D1_HRIR_SOFA",
     "D1_48K_24bit_256tap_FIR_SOFA.sofa"
 )
+
+
+def native_io_path(path):
+    abs_path = os.path.abspath(path)
+    if os.name != "nt":
+        return abs_path
+
+    # Some native libraries on Windows choke on non-ASCII paths. Prefer
+    # the short path when the file or its parent directory already exists.
+    target = abs_path
+    suffix = ""
+    if not os.path.exists(target):
+        parent = os.path.dirname(target)
+        if not parent or not os.path.exists(parent):
+            return abs_path
+        target = parent
+        suffix = os.path.basename(abs_path)
+
+    buffer_len = 32768
+    buffer = ctypes.create_unicode_buffer(buffer_len)
+    result = ctypes.windll.kernel32.GetShortPathNameW(target, buffer, buffer_len)
+    if result == 0 or result > buffer_len:
+        return abs_path
+
+    short_path = buffer.value
+    if suffix:
+        return os.path.join(short_path, suffix)
+    return short_path
+
+
+def is_ascii_path(path):
+    try:
+        path.encode("ascii")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+def prepare_read_path(path):
+    abs_path = os.path.abspath(path)
+    native_path = native_io_path(abs_path)
+    if is_ascii_path(native_path):
+        return native_path, None
+
+    temp_root = os.path.join(tempfile.gettempdir(), "brir-native-io")
+    os.makedirs(temp_root, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(
+        prefix="brir_in_",
+        suffix=os.path.splitext(abs_path)[1],
+        dir=temp_root
+    )
+    os.close(fd)
+    shutil.copy2(abs_path, temp_path)
+    return temp_path, temp_path
+
+
+def write_audio_file(path, data, sample_rate, subtype="FLOAT"):
+    abs_path = os.path.abspath(path)
+    native_path = native_io_path(abs_path)
+    if is_ascii_path(native_path):
+        sf.write(native_path, data, sample_rate, subtype=subtype)
+        return
+
+    temp_root = os.path.join(tempfile.gettempdir(), "brir-native-io")
+    os.makedirs(temp_root, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(
+        prefix="brir_out_",
+        suffix=os.path.splitext(abs_path)[1],
+        dir=temp_root
+    )
+    os.close(fd)
+    try:
+        sf.write(temp_path, data, sample_rate, subtype=subtype)
+        shutil.move(temp_path, abs_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 def apply_low_shelf(signal, sample_rate, freq_hz=80.0, gain_db=5.0, q=0.707):
@@ -327,13 +407,18 @@ def sofa_get(obj, key, aliases=None):
 
 
 def _read_sofa(path):
-    if hasattr(sofar, "read_sofa"):
-        return sofar.read_sofa(path)
-    if hasattr(sofar, "read"):
-        return sofar.read(path)
-    if hasattr(sofar, "Sofa"):
-        return sofar.Sofa(path)
-    raise RuntimeError("Unsupported sofar API; expected read_sofa/read/Sofa.")
+    read_path, cleanup_path = prepare_read_path(path)
+    try:
+        if hasattr(sofar, "read_sofa"):
+            return sofar.read_sofa(read_path)
+        if hasattr(sofar, "read"):
+            return sofar.read(read_path)
+        if hasattr(sofar, "Sofa"):
+            return sofar.Sofa(read_path)
+        raise RuntimeError("Unsupported sofar API; expected read_sofa/read/Sofa.")
+    finally:
+        if cleanup_path and os.path.exists(cleanup_path):
+            os.remove(cleanup_path)
 
 
 def _to_unit_vectors_from_spherical(az_el):
@@ -870,7 +955,7 @@ def generate_brir(profile_name="layout_7_1_4", output_root=None, sofa_path=None,
                 quad_rir = quad_rir / peak * peak_target
 
             filename = os.path.join(output_dir, f"{name}.wav")
-            sf.write(filename, quad_rir, fs, subtype='FLOAT')
+            write_audio_file(filename, quad_rir, fs, subtype='FLOAT')
             print(f"Saved {filename}")
 
     if generate_grid:
@@ -919,7 +1004,7 @@ def generate_brir(profile_name="layout_7_1_4", output_root=None, sofa_path=None,
                     quad_rir = quad_rir / peak * peak_target
 
                 filename = os.path.join(grid_dir, f"Seat_r{r_idx}_c{c_idx}.wav")
-                sf.write(filename, quad_rir, fs, subtype='FLOAT')
+                write_audio_file(filename, quad_rir, fs, subtype='FLOAT')
 
 
 if __name__ == "__main__":

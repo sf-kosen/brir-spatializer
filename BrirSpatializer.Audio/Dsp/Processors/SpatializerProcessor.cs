@@ -1,5 +1,6 @@
 using BrirSpatializer.Audio.Dsp.Spatial;
 using BrirSpatializer.Audio.Ir;
+using SpatialBrir = BrirSpatializer.Audio.Dsp.Spatial.BrirSpatializer;
 
 namespace BrirSpatializer.Audio.Dsp.Processors;
 
@@ -12,10 +13,10 @@ public enum SpatializerMode
 public sealed class SpatializerProcessor
 {
     private readonly FrameFader _irFader = new();
-    private BrirSpatializer? _active;
-    private BrirSpatializer? _pending;
-    private BrirSpatializer? _fadeFrom;
-    private BrirSpatializer? _fadeTo;
+    private SpatialBrir? _active;
+    private SpatialBrir? _pending;
+    private SpatialBrir? _fadeFrom;
+    private SpatialBrir? _fadeTo;
     private float[] _fadeOld = Array.Empty<float>();
     private float[] _fadeNew = Array.Empty<float>();
     private int _irSwitchMs = 100;
@@ -32,10 +33,10 @@ public sealed class SpatializerProcessor
 
     public void SetBrir(BrirIr ir, int irSwitchXfadeMs)
     {
-        _pending = new BrirSpatializer(ir, 2048, 1024);
+        _pending = new SpatialBrir(ir, 4096, 2048);
         _pending.Reset();
         _irSwitchMs = Math.Max(0, irSwitchXfadeMs);
-        EnsureFadeBuffers(2048);
+        EnsureFadeBuffers(4096);
     }
 
     public void Process(float[] buffer, int frames, int sampleRate)

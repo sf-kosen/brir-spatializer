@@ -104,7 +104,7 @@ public sealed class AudioEngine : IDisposable
         _dspGraph.SetSpatializerMode(slot, Dsp.Processors.SpatializerMode.Brir);
     }
 
-    public void Start(string inputDeviceId, string outputDeviceId)
+    public void Start(string inputDeviceId, string outputDeviceId, bool exclusiveOutput = false)
     {
         if (IsRunning) return;
 
@@ -158,15 +158,21 @@ public sealed class AudioEngine : IDisposable
             _outputBytesPerFrame,
             UpdateDriftRatio,
             UpdateFillLevel,
+            () => _asrcRatio,
             IncrementSlipCount,
             ReportError);
 
-        _capture = new WasapiCapture(inputDevice);
+        int latencyMs = Math.Max(40, (int)Math.Round((_settings.BlockSize * 2.0) / outputRate * 1000.0));
+        _capture = inputDevice.DataFlow == DataFlow.Render
+            ? new WasapiLoopbackCapture(inputDevice)
+            : new WasapiCapture(inputDevice, true, latencyMs);
         _capture.DataAvailable += OnCaptureDataAvailable;
         _capture.RecordingStopped += OnCaptureStopped;
 
-        int latencyMs = Math.Max(10, (int)Math.Round(_settings.BlockSize / (double)outputRate * 1000.0));
-        _output = new WasapiOut(outputDevice, AudioClientShareMode.Shared, false, latencyMs);
+        AudioClientShareMode shareMode = exclusiveOutput
+            ? AudioClientShareMode.Exclusive
+            : AudioClientShareMode.Shared;
+        _output = new WasapiOut(outputDevice, shareMode, true, latencyMs);
         _output.Init(_provider);
 
         _capture.StartRecording();
@@ -182,6 +188,7 @@ public sealed class AudioEngine : IDisposable
         _output?.Stop();
         _capture?.Dispose();
         _output?.Dispose();
+        _provider?.Dispose();
         _capture = null;
         _output = null;
         _ringBuffer = null;
@@ -207,6 +214,7 @@ public sealed class AudioEngine : IDisposable
             {
                 ConvertToFloat(e.Buffer, e.BytesRecorded, buffer);
                 _ringBuffer.Write(buffer, frames);
+                _provider?.NotifyInputAvailable();
             }
             finally
             {
@@ -411,9 +419,10 @@ public sealed class AudioEngine : IDisposable
         Stop();
     }
 
-    private sealed class EngineWaveProvider : IWaveProvider
+    private sealed class EngineWaveProvider : IWaveProvider, IDisposable
     {
         private readonly RingBuffer _ringBuffer;
+        private readonly RingBuffer _processedBuffer;
         private readonly AudioSettings _settings;
         private readonly DspGraph _dspGraph;
         private readonly int _sampleRate;
@@ -422,12 +431,24 @@ public sealed class AudioEngine : IDisposable
         private readonly int _outputBytesPerFrame;
         private readonly Action<double, int> _driftUpdate;
         private readonly Action<double> _fillUpdate;
+        private readonly Func<float> _asrcRatioAccessor;
         private readonly Action _slipCount;
         private readonly Action<Exception> _errorCallback;
+        private readonly float _liveTrimLinear;
+        private readonly int _dspBlockFrames;
+        private readonly int _strictTargetFrames;
+        private readonly AutoResetEvent _strictInputSignal = new(false);
+        private readonly Thread? _strictWorker;
         private float[] _scratch;
+        private float[] _processBuffer = Array.Empty<float>();
         private float[] _slipBuffer = Array.Empty<float>();
+        private float[] _asrcBuffer = Array.Empty<float>();
+        private float[] _dspBlockBuffer = Array.Empty<float>();
+        private int _asrcBufferedFrames;
+        private double _asrcPhase;
         private readonly Stopwatch _prerollTimer = Stopwatch.StartNew();
         private double _latestFillMs;
+        private volatile bool _strictWorkerStop;
 
         private bool _prerollActive = true;
         private int _fadeInRemaining;
@@ -443,6 +464,7 @@ public sealed class AudioEngine : IDisposable
             int outputBytesPerFrame,
             Action<double, int> driftUpdate,
             Action<double> fillUpdate,
+            Func<float> asrcRatioAccessor,
             Action slipCount,
             Action<Exception> errorCallback)
         {
@@ -455,13 +477,43 @@ public sealed class AudioEngine : IDisposable
             _outputBytesPerFrame = outputBytesPerFrame;
             _driftUpdate = driftUpdate;
             _fillUpdate = fillUpdate;
+            _asrcRatioAccessor = asrcRatioAccessor;
             _slipCount = slipCount;
             _errorCallback = errorCallback;
+            _liveTrimLinear = (float)Math.Pow(10.0, settings.LiveTrimDb / 20.0);
+            _dspBlockFrames = Math.Max(1, settings.BlockSize);
+            _strictTargetFrames = Math.Max(
+                _dspBlockFrames * 8,
+                (int)Math.Ceiling((settings.DriftTargetBufferMs / 1000.0) * sampleRate));
             _scratch = new float[settings.BlockSize * Channels];
+            _processBuffer = new float[settings.BlockSize * Channels];
+            _dspBlockBuffer = new float[_dspBlockFrames * Channels];
+            int processedCapacityFrames = Math.Max(
+                _strictTargetFrames + (_dspBlockFrames * 8),
+                (int)Math.Ceiling(((settings.DriftTargetBufferMs + BufferMarginMs) / 1000.0) * sampleRate));
+            _processedBuffer = new RingBuffer(processedCapacityFrames, Channels);
             WaveFormat = outputFormat;
+
+            if (_settings.DriftCompensationMode == DriftCompensationMode.Strict)
+            {
+                _strictWorker = new Thread(StrictProcessingLoop)
+                {
+                    IsBackground = true,
+                    Name = "BrirStrictDspWorker"
+                };
+                _strictWorker.Start();
+            }
         }
 
         public WaveFormat WaveFormat { get; }
+
+        public void NotifyInputAvailable()
+        {
+            if (_settings.DriftCompensationMode == DriftCompensationMode.Strict)
+            {
+                _strictInputSignal.Set();
+            }
+        }
 
         public int Read(byte[] buffer, int offset, int count)
         {
@@ -473,7 +525,7 @@ public sealed class AudioEngine : IDisposable
                 EnsureScratch(framesRequested);
                 Array.Clear(_scratch, 0, framesRequested * Channels);
 
-                double fillMs = _ringBuffer.GetFillLevelMs(_sampleRate);
+                double fillMs = GetPlaybackFillLevelMs();
                 _latestFillMs = fillMs;
                 _fillUpdate(fillMs);
                 _driftUpdate(fillMs, _sampleRate);
@@ -500,7 +552,14 @@ public sealed class AudioEngine : IDisposable
 
                 if (shouldRead)
                 {
-                    ReadFromBuffer(framesRequested);
+                    if (_settings.DriftCompensationMode == DriftCompensationMode.Strict)
+                    {
+                        ReadStrictOutput(framesRequested);
+                    }
+                    else
+                    {
+                        ReadFromBuffer(framesRequested);
+                    }
                 }
 
                 if (forceMute)
@@ -513,7 +572,11 @@ public sealed class AudioEngine : IDisposable
                     ApplyFadeIn(framesRequested);
                 }
 
-                _dspGraph.Process(_scratch, framesRequested, _sampleRate);
+                if (!forceMute && _settings.DriftCompensationMode != DriftCompensationMode.Strict)
+                {
+                    ApplyLiveTrim(_scratch, framesRequested);
+                    ProcessDsp(framesRequested);
+                }
 
                 WriteOutput(buffer, offset, framesRequested);
                 return framesRequested * _outputBytesPerFrame;
@@ -536,11 +599,74 @@ public sealed class AudioEngine : IDisposable
                 }
             }
 
+            if (_settings.DriftCompensationMode == DriftCompensationMode.Asrc)
+            {
+                if (TryApplyAsrc(framesRequested))
+                {
+                    return;
+                }
+            }
+
             int readFrames = _ringBuffer.Read(_scratch, framesRequested);
             if (readFrames < framesRequested)
             {
                 Array.Clear(_scratch, readFrames * Channels, (framesRequested - readFrames) * Channels);
             }
+        }
+
+        public void Dispose()
+        {
+            _strictWorkerStop = true;
+            _strictInputSignal.Set();
+            if (_strictWorker is not null && _strictWorker.IsAlive)
+            {
+                _strictWorker.Join(500);
+            }
+            _strictInputSignal.Dispose();
+        }
+
+        private double GetPlaybackFillLevelMs()
+        {
+            if (_settings.DriftCompensationMode == DriftCompensationMode.Strict)
+            {
+                return _processedBuffer.GetFillLevelMs(_sampleRate);
+            }
+
+            return _ringBuffer.GetFillLevelMs(_sampleRate);
+        }
+
+        private bool TryApplyAsrc(int framesRequested)
+        {
+            if (framesRequested <= 0)
+            {
+                return true;
+            }
+
+            float ratio = Math.Clamp(_asrcRatioAccessor(), 0.95f, 1.05f);
+            int sourceFrames = Math.Max(2, (int)Math.Floor(_asrcPhase + ((framesRequested - 1) * ratio)) + 2);
+            EnsureAsrcBuffer(sourceFrames);
+            FillAsrcBuffer(sourceFrames);
+
+            if (_asrcBufferedFrames <= 0)
+            {
+                Array.Clear(_scratch, 0, framesRequested * Channels);
+                return true;
+            }
+
+            if (_asrcBufferedFrames == 1)
+            {
+                for (int frame = 0; frame < framesRequested; frame++)
+                {
+                    int dstBase = frame * Channels;
+                    _scratch[dstBase] = _asrcBuffer[0];
+                    _scratch[dstBase + 1] = _asrcBuffer[1];
+                }
+                return true;
+            }
+
+            ResampleLinear(_asrcBuffer, _asrcBufferedFrames, _asrcPhase, ratio, _scratch, framesRequested, Channels);
+            AdvanceAsrcBuffer(framesRequested, ratio);
+            return true;
         }
 
         private bool TryApplySlip(int framesRequested)
@@ -590,6 +716,236 @@ public sealed class AudioEngine : IDisposable
             int samples = frames * Channels;
             if (_slipBuffer.Length >= samples) return;
             _slipBuffer = new float[samples];
+        }
+
+        private void EnsureAsrcBuffer(int frames)
+        {
+            int samples = frames * Channels;
+            if (_asrcBuffer.Length >= samples) return;
+            _asrcBuffer = new float[samples];
+        }
+
+        private void FillAsrcBuffer(int requiredFrames)
+        {
+            if (_asrcBufferedFrames >= requiredFrames)
+            {
+                return;
+            }
+
+            int framesNeeded = requiredFrames - _asrcBufferedFrames;
+            if (framesNeeded <= 0)
+            {
+                return;
+            }
+
+            float[] temp = ArrayPool<float>.Shared.Rent(framesNeeded * Channels);
+            try
+            {
+                int readFrames = _ringBuffer.Read(temp, framesNeeded);
+                if (readFrames <= 0)
+                {
+                    return;
+                }
+
+                Array.Copy(temp, 0, _asrcBuffer, _asrcBufferedFrames * Channels, readFrames * Channels);
+                _asrcBufferedFrames += readFrames;
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(temp);
+            }
+        }
+
+        private void AdvanceAsrcBuffer(int outputFrames, float ratio)
+        {
+            double nextPhase = _asrcPhase + (outputFrames * ratio);
+            int consumedFrames = (int)Math.Floor(nextPhase);
+            _asrcPhase = nextPhase - consumedFrames;
+
+            if (consumedFrames <= 0)
+            {
+                return;
+            }
+
+            if (consumedFrames >= _asrcBufferedFrames)
+            {
+                _asrcBufferedFrames = 0;
+                _asrcPhase = 0;
+                return;
+            }
+
+            int remainingFrames = _asrcBufferedFrames - consumedFrames;
+            Array.Copy(
+                _asrcBuffer,
+                consumedFrames * Channels,
+                _asrcBuffer,
+                0,
+                remainingFrames * Channels);
+            _asrcBufferedFrames = remainingFrames;
+        }
+
+        private void ProcessDsp(int framesRequested)
+        {
+            int offsetFrames = 0;
+            while (offsetFrames < framesRequested)
+            {
+                int chunkFrames = Math.Min(_settings.BlockSize, framesRequested - offsetFrames);
+                EnsureProcessBuffer(chunkFrames);
+                int chunkSamples = chunkFrames * Channels;
+                Array.Copy(_scratch, offsetFrames * Channels, _processBuffer, 0, chunkSamples);
+                _dspGraph.Process(_processBuffer, chunkFrames, _sampleRate);
+                Array.Copy(_processBuffer, 0, _scratch, offsetFrames * Channels, chunkSamples);
+                offsetFrames += chunkFrames;
+            }
+        }
+
+        private void ReadStrictOutput(int framesRequested)
+        {
+            int copiedFrames = ReadProcessedFrames(_scratch, 0, framesRequested);
+            if (copiedFrames < framesRequested)
+            {
+                Stopwatch wait = Stopwatch.StartNew();
+                while (copiedFrames < framesRequested && wait.ElapsedMilliseconds < 8)
+                {
+                    _strictInputSignal.Set();
+                    Thread.Sleep(1);
+                    copiedFrames += ReadProcessedFrames(_scratch, copiedFrames, framesRequested - copiedFrames);
+                }
+            }
+
+            if (copiedFrames < framesRequested)
+            {
+                Array.Clear(_scratch, copiedFrames * Channels, (framesRequested - copiedFrames) * Channels);
+            }
+            _strictInputSignal.Set();
+        }
+
+        private void ApplyLiveTrim(float[] targetBuffer, int framesRequested)
+        {
+            if (Math.Abs(_liveTrimLinear - 1.0f) < 1e-6f)
+            {
+                return;
+            }
+
+            int samples = framesRequested * Channels;
+            for (int i = 0; i < samples; i++)
+            {
+                targetBuffer[i] *= _liveTrimLinear;
+            }
+        }
+
+        private void EnsureProcessBuffer(int frames)
+        {
+            int samples = frames * Channels;
+            if (_processBuffer.Length >= samples) return;
+            Array.Resize(ref _processBuffer, samples);
+        }
+
+        private int ReadProcessedFrames(float[] destination, int destinationFrameOffset, int framesRequested)
+        {
+            if (framesRequested <= 0)
+            {
+                return 0;
+            }
+
+            EnsureProcessBuffer(framesRequested);
+            int readFrames = _processedBuffer.Read(_processBuffer, framesRequested);
+            if (readFrames > 0)
+            {
+                Array.Copy(
+                    _processBuffer,
+                    0,
+                    destination,
+                    destinationFrameOffset * Channels,
+                    readFrames * Channels);
+            }
+
+            return readFrames;
+        }
+
+        private void StrictProcessingLoop()
+        {
+            try
+            {
+                while (!_strictWorkerStop)
+                {
+                    if (_processedBuffer.AvailableFrames >= _strictTargetFrames)
+                    {
+                        _strictInputSignal.WaitOne(4);
+                        continue;
+                    }
+
+                    int processedFreeFrames = _processedBuffer.CapacityFrames - _processedBuffer.AvailableFrames;
+                    if (processedFreeFrames <= 0)
+                    {
+                        _strictInputSignal.WaitOne(2);
+                        continue;
+                    }
+
+                    int availableInputFrames = _ringBuffer.AvailableFrames;
+                    if (availableInputFrames <= 0)
+                    {
+                        _strictInputSignal.WaitOne(2);
+                        continue;
+                    }
+
+                    int chunkFrames = Math.Min(_dspBlockFrames, Math.Min(availableInputFrames, processedFreeFrames));
+                    int readFrames = _ringBuffer.Read(_dspBlockBuffer, chunkFrames);
+                    if (readFrames <= 0)
+                    {
+                        _strictInputSignal.WaitOne(2);
+                        continue;
+                    }
+
+                    ApplyLiveTrim(_dspBlockBuffer, readFrames);
+                    _dspGraph.Process(_dspBlockBuffer, readFrames, _sampleRate);
+                    _processedBuffer.Write(_dspBlockBuffer, readFrames);
+                }
+            }
+            catch (Exception ex)
+            {
+                _errorCallback(ex);
+            }
+        }
+
+        private static void ResampleLinear(float[] input, int inputFrames, double phase, float ratio, float[] output, int outputFrames, int channels)
+        {
+            if (outputFrames <= 0)
+            {
+                return;
+            }
+
+            if (inputFrames <= 0)
+            {
+                Array.Clear(output, 0, outputFrames * channels);
+                return;
+            }
+
+            if (inputFrames == 1)
+            {
+                for (int frame = 0; frame < outputFrames; frame++)
+                {
+                    for (int ch = 0; ch < channels; ch++)
+                    {
+                        output[(frame * channels) + ch] = input[ch];
+                    }
+                }
+                return;
+            }
+
+            for (int frame = 0; frame < outputFrames; frame++)
+            {
+                double srcPos = phase + (frame * ratio);
+                int src0 = (int)Math.Floor(srcPos);
+                int src1 = Math.Min(src0 + 1, inputFrames - 1);
+                float t = (float)(srcPos - src0);
+                for (int ch = 0; ch < channels; ch++)
+                {
+                    float a = input[(src0 * channels) + ch];
+                    float b = input[(src1 * channels) + ch];
+                    output[(frame * channels) + ch] = a + ((b - a) * t);
+                }
+            }
         }
 
         private static void ApplyDrop(float[] input, float[] output, int framesOut, int channels, int dropIndex, int xfadeFrames)

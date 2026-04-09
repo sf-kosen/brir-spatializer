@@ -26,7 +26,10 @@ public sealed class IrLoader
 
         if (reader.WaveFormat.SampleRate != expectedSampleRate)
         {
-            return new IrLoadResult(null, "IR sample rate mismatch.");
+            return new IrLoadResult(
+                null,
+                $"IR sample rate mismatch. IR={reader.WaveFormat.SampleRate} Hz, output device={expectedSampleRate} Hz."
+            );
         }
 
         List<float> samples = reader.WaveFormat.Encoding == WaveFormatEncoding.Pcm && reader.WaveFormat.BitsPerSample == 32

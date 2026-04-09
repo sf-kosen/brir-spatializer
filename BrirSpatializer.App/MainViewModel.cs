@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Windows.Threading;
 using BrirSpatializer.Audio;
 using BrirSpatializer.Audio.Dsp;
@@ -14,6 +15,7 @@ namespace BrirSpatializer.App;
 
 public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
+    private static readonly Regex SeatFileRegex = new(@"Seat_r(?<row>\d+)_c(?<col>\d+)\.wav$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private readonly AudioEngine _engine;
     private readonly DispatcherTimer _statusTimer;
     private AudioDeviceInfo? _selectedInput;
@@ -326,6 +328,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         try
         {
+            if (!TryPrepareCurrentPresetForPlayback(out string? prepareMessage))
+            {
+                StatusText = prepareMessage ?? "Failed to prepare BRIR preset.";
+                return;
+            }
+
             _engine.Start(SelectedInput.Id, SelectedOutput.Id);
             IsRunning = true;
             StatusText = "Running";
@@ -390,6 +398,43 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Preset preset = BuildPresetFromUi();
 
         _presetStore.Save(path, preset);
+    }
+
+    public bool TryExportCurrentPreset(string inputPath, string outputPath, out string? message)
+    {
+        message = null;
+        if (IsRunning)
+        {
+            message = "Stop playback before offline export.";
+            return false;
+        }
+
+        if (SelectedOutput is null)
+        {
+            message = "Select output device before offline export.";
+            return false;
+        }
+
+        int? sampleRate = _engine.TryGetDeviceSampleRate(SelectedOutput.Id);
+        if (!sampleRate.HasValue)
+        {
+            message = "Failed to resolve output sample rate.";
+            return false;
+        }
+
+        try
+        {
+            Preset preset = BuildPresetFromUi();
+            var renderer = new OfflineRenderer(_settings);
+            renderer.Render(inputPath, outputPath, preset, sampleRate.Value);
+            message = $"Exported processed WAV to {outputPath}";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+            return false;
+        }
     }
 
     public void SetSlotPath(ActiveSlot slot, string path)
@@ -499,7 +544,26 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
         int rows = slot == ActiveSlot.A ? SlotARows : SlotBRows;
         int cols = slot == ActiveSlot.A ? SlotACols : SlotBCols;
-        if (paths.Count != rows * cols)
+        List<string> orderedPaths = paths.ToList();
+
+        if (TryInferGridLayout(paths, out int inferredRows, out int inferredCols, out List<string>? inferredPaths))
+        {
+            rows = inferredRows;
+            cols = inferredCols;
+            orderedPaths = inferredPaths;
+            if (slot == ActiveSlot.A)
+            {
+                SlotARows = rows;
+                SlotACols = cols;
+            }
+            else
+            {
+                SlotBRows = rows;
+                SlotBCols = cols;
+            }
+        }
+
+        if (orderedPaths.Count != rows * cols)
         {
             message = $"Expected {rows * cols} files for {rows}x{cols} grid.";
             return false;
@@ -509,7 +573,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             Rows = rows,
             Columns = cols,
-            Paths = paths.ToList()
+            Paths = orderedPaths
         };
 
         BrirSet? set = LoadBrirSet(preset, sampleRate.Value, ref message);
@@ -534,6 +598,84 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         // Auto-enable the module
         if (slot == ActiveSlot.A) SlotABrirEnabled = true;
         else SlotBBrirEnabled = true;
+
+        return true;
+    }
+
+    private bool TryPrepareCurrentPresetForPlayback(out string? message)
+    {
+        message = null;
+        if (SelectedOutput is null)
+        {
+            message = "Select output device before preparing BRIR.";
+            return false;
+        }
+
+        int? sampleRate = _engine.TryGetDeviceSampleRate(SelectedOutput.Id);
+        if (!sampleRate.HasValue)
+        {
+            message = "Failed to resolve output sample rate.";
+            return false;
+        }
+
+        var messages = new List<string>();
+        PresetSlot slotAPreset = BuildSlotPresetFromUi(ActiveSlot.A);
+        PresetSlot slotBPreset = BuildSlotPresetFromUi(ActiveSlot.B);
+
+        string? slotAMessage = null;
+        ApplySlotPreset(ActiveSlot.A, slotAPreset, sampleRate.Value, _irSwitchXfadeMs, ref _slotAState, ref slotAMessage);
+        if (!string.IsNullOrWhiteSpace(slotAMessage))
+        {
+            messages.Add($"Slot A: {slotAMessage}");
+        }
+
+        string? slotBMessage = null;
+        ApplySlotPreset(ActiveSlot.B, slotBPreset, sampleRate.Value, _irSwitchXfadeMs, ref _slotBState, ref slotBMessage);
+        if (!string.IsNullOrWhiteSpace(slotBMessage))
+        {
+            messages.Add($"Slot B: {slotBMessage}");
+        }
+
+        if (messages.Count > 0)
+        {
+            message = string.Join(" | ", messages);
+        }
+
+        return messages.Count == 0;
+    }
+
+    private static bool TryInferGridLayout(IReadOnlyList<string> paths, out int rows, out int cols, out List<string> orderedPaths)
+    {
+        rows = 0;
+        cols = 0;
+        orderedPaths = new List<string>();
+        if (paths.Count == 0) return false;
+
+        var indexed = new Dictionary<(int Row, int Col), string>();
+        foreach (string path in paths)
+        {
+            string fileName = Path.GetFileName(path);
+            Match match = SeatFileRegex.Match(fileName);
+            if (!match.Success) return false;
+
+            int row = int.Parse(match.Groups["row"].Value);
+            int col = int.Parse(match.Groups["col"].Value);
+            if (!indexed.TryAdd((row, col), path)) return false;
+
+            rows = Math.Max(rows, row + 1);
+            cols = Math.Max(cols, col + 1);
+        }
+
+        if (rows * cols != paths.Count) return false;
+
+        for (int row = 0; row < rows; row++)
+        {
+            for (int col = 0; col < cols; col++)
+            {
+                if (!indexed.TryGetValue((row, col), out string? path)) return false;
+                orderedPaths.Add(path);
+            }
+        }
 
         return true;
     }
