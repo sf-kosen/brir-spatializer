@@ -167,7 +167,9 @@ public sealed class AudioEngine : IDisposable
             IncrementSlipCount,
             ReportError);
 
-        int latencyMs = Math.Max(40, (int)Math.Round((_settings.BlockSize * 2.0) / outputRate * 1000.0));
+        int latencyMs = _settings.DriftCompensationMode == DriftCompensationMode.Strict
+            ? Math.Clamp((int)Math.Round((_settings.BlockSize * 0.35) / outputRate * 1000.0), 12, 20)
+            : Math.Max(40, (int)Math.Round((_settings.BlockSize * 2.0) / outputRate * 1000.0));
         _capture = inputDevice.DataFlow == DataFlow.Render
             ? new WasapiLoopbackCapture(inputDevice)
             : new WasapiCapture(inputDevice, true, latencyMs);

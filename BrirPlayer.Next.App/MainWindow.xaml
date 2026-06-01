@@ -11,6 +11,10 @@
         MinWidth="1100"
         MinHeight="820"
         Background="#F4F1EB"
+        WindowStyle="SingleBorderWindow"
+        ResizeMode="CanResize"
+        AllowsTransparency="False"
+        WindowState="Maximized"
         UseLayoutRounding="True"
         SnapsToDevicePixels="True"
         WindowStartupLocation="CenterScreen">
