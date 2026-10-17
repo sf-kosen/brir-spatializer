@@ -21,3 +21,24 @@ Rewrite in progress. The previous .NET/WPF implementation is kept on the
 - Windows 10/11
 - Visual Studio 2022 Build Tools (MSVC, C++ workload)
 - CMake 3.24+
+
+## Build
+
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release
+.\build\tests\Release\brir_tests.exe
+```
+
+The app is `build\app\BrirCinema_artefacts\Release\BRIR Cinema.exe`.
+
+## Layout
+
+- `engine/` – JUCE-independent DSP: non-uniform partitioned convolver, clock
+  bridge (drift-compensating resampler), limiter, renderer
+- `io/` – WASAPI capture (loopback or input endpoint) feeding the clock bridge
+- `app/` – JUCE desktop app
+- `tests/` – unit tests (doctest)
+- `tools/` – `bench_convolver`, `capture_probe` (capture vs. system clock),
+  `output_probe` (full real-time path inside a real output device, muted)
+
