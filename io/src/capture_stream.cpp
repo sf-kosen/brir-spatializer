@@ -31,7 +31,9 @@ constexpr REFERENCE_TIME kBufferDuration = 2'000'000; // 200 ms in 100 ns units
 constexpr LONG kPollPeriodMs = 2;
 // While a loopback source is idle WASAPI delivers nothing; after this long we
 // feed silence so the output side keeps a steady stream.
-constexpr double kSilenceFillAfterSeconds = 0.020;
+// Some virtual devices deliver in irregular bursts with gaps of tens of ms
+// while playing; treating those as "idle" inserted silence mid-programme.
+constexpr double kSilenceFillAfterSeconds = 0.200;
 constexpr double kSilenceFillMarginSeconds = 0.005;
 
 template <typename T>
@@ -373,6 +375,7 @@ void CaptureStream::run(CaptureDevice device, ClockBridgeConfig bridgeConfig, st
         bool idle = false;
         double timestampOffset = 0.0;
         bool haveOffset = false;
+        double lastDelivery = 0.0;
         while (!stopRequested_.load(std::memory_order_relaxed)) {
             timer.wait();
             UINT32 packet = 0;
@@ -426,15 +429,24 @@ void CaptureStream::run(CaptureDevice device, ClockBridgeConfig bridgeConfig, st
                 }
                 capture->ReleaseBuffer(frames);
                 delivered = true;
+                if (lastDelivery > 0.0) {
+                    double gapMs = (arrival - lastDelivery) * 1000.0;
+                    double seen = maxDeliveryGapMs_.load(std::memory_order_relaxed);
+                    while (gapMs > seen && !maxDeliveryGapMs_.compare_exchange_weak(seen, gapMs)) {
+                    }
+                }
+                lastDelivery = arrival;
             }
 
-            // A loopback source delivers nothing while nothing plays. Once the
-            // gap exceeds a normal delivery interval, keep the stream going with
-            // silence in small steps, lagging real time by a small margin.
+            // A loopback source delivers nothing while nothing plays. Once nothing
+            // has arrived for far longer than any delivery gap seen during
+            // playback, keep the stream going with silence in small steps,
+            // lagging real time by a small margin.
             double now = ClockBridge::now();
             if (!delivered && device.loopback && (idle || now - streamEnd > kSilenceFillAfterSeconds)) {
                 if (!idle) silenceFills_.fetch_add(1);
                 idle = true;
+                lastDelivery = 0.0; // the gap into idle isn't a delivery gap
                 int frames = static_cast<int>((now - kSilenceFillMarginSeconds - streamEnd) * rate);
                 if (frames > 0) {
                     logPacket(streamEnd, frames, PacketRecord::SilenceFill);

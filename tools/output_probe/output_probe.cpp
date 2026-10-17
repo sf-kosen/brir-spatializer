@@ -7,9 +7,19 @@
 //
 // With a feed device, a quiet tone is played to it (on for 5 s, off for 5 s), so
 // a loopback capture of that device sees real packets and idle transitions.
+//
+// Environment: BRIR_PROBE_CINEMA=<cinema.json> runs the full renderer with that
+// cinema set; BRIR_PROBE_MMCSS=1 puts the convolver's worker threads in MMCSS.
 
+#include "../common/cinema_loader.h"
 #include "brir/io/capture_stream.h"
 #include "brir/renderer.h"
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <avrt.h>
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -37,7 +47,28 @@ public:
         renderer_ = std::make_unique<brir::Renderer>(device->getCurrentSampleRate(), 4096);
         left_.assign(4096, 0.0f);
         right_.assign(4096, 0.0f);
+
+        juce::String cinema = juce::SystemStats::getEnvironmentVariable("BRIR_PROBE_CINEMA", {});
+        if (cinema.isNotEmpty()) {
+            brir::IrMatrix irs;
+            if (!brir::tools::loadCinema(juce::File(cinema), device->getCurrentSampleRate(), irs)) {
+                std::fprintf(stderr, "Cannot load cinema set.\n");
+                return;
+            }
+            brir::ConvolverConfig config;
+            if (juce::SystemStats::getEnvironmentVariable("BRIR_PROBE_MMCSS", {}) == "1") {
+                config.onWorkerStart = [] {
+                    DWORD task = 0;
+                    AvSetMmThreadCharacteristicsW(L"Pro Audio", &task);
+                };
+            }
+            bool mmcss = static_cast<bool>(config.onWorkerStart);
+            renderer_->setConvolver(std::make_unique<brir::Convolver>(brir::Renderer::kFeeds, 2, irs, config));
+            std::printf("Renderer: cinema set loaded, worker MMCSS %s\n", mmcss ? "on" : "off");
+        }
     }
+
+    std::uint64_t lateBlocks() const { return renderer_ ? renderer_->lateBlocks() : 0; }
     void audioDeviceStopped() override {}
 
     void audioDeviceIOCallbackWithContext(const float* const*, int, float* const* outputs, int numOutputs,
@@ -201,6 +232,7 @@ int main(int argc, char** argv)
                 sorted[sorted.size() / 2], sorted[sorted.size() * 999 / 1000], sorted.back());
     std::printf("Bridge: target %.2f ms, fill %.2f ms, drift %+.1f ppm, min buffered (after 1 s) %.2f ms\n", last.targetMs,
                 last.fillMs, last.driftPpm, minBuffered);
+    std::printf("Convolver late blocks %llu\n", static_cast<unsigned long long>(probe.lateBlocks()));
     std::printf("Underruns %llu, resyncs %llu, overflows %llu\n", static_cast<unsigned long long>(last.underruns),
                 static_cast<unsigned long long>(last.resyncs), static_cast<unsigned long long>(last.overflows));
 

@@ -51,6 +51,16 @@ void RealFft::inverse(const float* spectrum, float* output) noexcept
     pffft_transform(setup_, spectrum, output, work_.data(), PFFFT_BACKWARD);
 }
 
+void RealFft::forwardOrdered(const float* input, float* spectrum) noexcept
+{
+    pffft_transform_ordered(setup_, input, spectrum, work_.data(), PFFFT_FORWARD);
+}
+
+void RealFft::inverseOrdered(const float* spectrum, float* output) noexcept
+{
+    pffft_transform_ordered(setup_, spectrum, output, work_.data(), PFFFT_BACKWARD);
+}
+
 void RealFft::multiplyAccumulate(const float* a, const float* b, float* acc, float scale) const noexcept
 {
     pffft_zconvolve_accumulate(setup_, a, b, acc, scale);

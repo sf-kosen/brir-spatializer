@@ -36,10 +36,21 @@ void inBlocks(Stereo& s, int block, Fn fn)
     }
 }
 
+// Feeds L -> left ear and R -> right ear with a plain gain; other feeds unused.
+// Pair it with a disabled upmixer so L/R pass straight through.
 std::unique_ptr<brir::Convolver> identityConvolver(float gain = 1.0f)
 {
-    brir::IrMatrix irs{{{gain}, {}}, {{}, {gain}}};
-    return std::make_unique<brir::Convolver>(2, 2, irs);
+    brir::IrMatrix irs(brir::Renderer::kFeeds, std::vector<std::vector<float>>(2));
+    irs[brir::Upmixer::L][0] = {gain};
+    irs[brir::Upmixer::R][1] = {gain};
+    return std::make_unique<brir::Convolver>(brir::Renderer::kFeeds, 2, irs);
+}
+
+std::unique_ptr<brir::Renderer> passthroughRenderer()
+{
+    auto renderer = std::make_unique<brir::Renderer>(48000.0, 512);
+    renderer->upmixer().setEnabled(false);
+    return renderer;
 }
 
 } // namespace
@@ -68,7 +79,8 @@ TEST_CASE("limiter holds the ceiling and is transparent below it")
 
 TEST_CASE("renderer output is the convolved input, delayed by its reported latency")
 {
-    brir::Renderer renderer(48000.0, 512);
+    auto rendererPtr = passthroughRenderer();
+    brir::Renderer& renderer = *rendererPtr;
     REQUIRE(renderer.setConvolver(identityConvolver(0.5f)));
 
     Stereo signal = sine(9600, 0.5f);
@@ -76,7 +88,7 @@ TEST_CASE("renderer output is the convolved input, delayed by its reported laten
     inBlocks(signal, 480, [&](float* const* io, int n) { renderer.process(io, io, n); });
 
     int delay = renderer.latencySamples();
-    CHECK(delay == 128 + 72);
+    CHECK(delay == 512 + 128 + 72);
     for (std::size_t i = static_cast<std::size_t>(delay); i < signal[0].size(); ++i) {
         REQUIRE(signal[0][i] == doctest::Approx(0.5f * original[0][i - static_cast<std::size_t>(delay)]).epsilon(1e-4));
         REQUIRE(signal[1][i] == doctest::Approx(0.5f * original[1][i - static_cast<std::size_t>(delay)]).epsilon(1e-4));
@@ -85,7 +97,8 @@ TEST_CASE("renderer output is the convolved input, delayed by its reported laten
 
 TEST_CASE("bypass is time-aligned with the processed path")
 {
-    brir::Renderer renderer(48000.0, 512);
+    auto rendererPtr = passthroughRenderer();
+    brir::Renderer& renderer = *rendererPtr;
     REQUIRE(renderer.setConvolver(identityConvolver()));
     Stereo warmup = sine(4800, 0.3f);
     inBlocks(warmup, 480, [&](float* const* io, int n) { renderer.process(io, io, n); });
@@ -104,7 +117,8 @@ TEST_CASE("bypass is time-aligned with the processed path")
 
 TEST_CASE("swapping convolvers crossfades and retires the old one")
 {
-    brir::Renderer renderer(48000.0, 512);
+    auto rendererPtr = passthroughRenderer();
+    brir::Renderer& renderer = *rendererPtr;
     REQUIRE(renderer.setConvolver(identityConvolver(1.0f)));
     Stereo signal = sine(4800, 0.2f);
     inBlocks(signal, 480, [&](float* const* io, int n) { renderer.process(io, io, n); });
@@ -125,4 +139,32 @@ TEST_CASE("swapping convolvers crossfades and retires the old one")
     for (std::size_t i = 1; i < after[0].size(); ++i) maxStep = std::max(maxStep, std::abs(after[0][i] - after[0][i - 1]));
     CHECK(maxStep < 0.2f * 2.0f * static_cast<float>(std::numbers::pi) * 1000.0f / 48000.0f * 1.05f);
     CHECK(renderer.setConvolver(identityConvolver(0.25f)));
+}
+
+TEST_CASE("renderer upmixes before convolving")
+{
+    // Only the centre feed reaches the ears: a centred source must come through,
+    // a hard-left one must not.
+    brir::IrMatrix irs(brir::Renderer::kFeeds, std::vector<std::vector<float>>(2));
+    irs[brir::Upmixer::C][0] = {1.0f};
+    irs[brir::Upmixer::C][1] = {1.0f};
+    brir::Renderer renderer(48000.0, 512);
+    REQUIRE(renderer.setConvolver(std::make_unique<brir::Convolver>(brir::Renderer::kFeeds, 2, irs)));
+
+    auto measure = [&](float leftGain, float rightGain) {
+        Stereo s = sine(48000, 0.2f, 500.0);
+        for (auto& v : s[1]) v = 0.0f;
+        for (std::size_t i = 0; i < s[0].size(); ++i) {
+            float v = s[0][i];
+            s[0][i] = v * leftGain;
+            s[1][i] = v * rightGain;
+        }
+        inBlocks(s, 480, [&](float* const* io, int n) { renderer.process(io, io, n); });
+        double e = 0.0;
+        for (std::size_t i = 24000; i < s[0].size(); ++i) e += s[0][i] * s[0][i];
+        return e;
+    };
+    double centred = measure(1.0f, 1.0f);
+    double left = measure(1.0f, 0.0f);
+    CHECK(centred > 100.0 * left);
 }

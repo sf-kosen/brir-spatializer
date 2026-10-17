@@ -220,6 +220,8 @@ TEST_CASE("recovers from an input dropout")
     brir::ClockBridgeStats stats = simulateDrift(sim);
     CHECK(stats.underruns == 1);
     CHECK(stats.running);
+    // The producer stopped; that is not a reason to buffer more from now on.
+    CHECK(stats.marginMs == doctest::Approx(3.0));
 }
 
 TEST_CASE("target latency follows the delivery pattern")
@@ -239,4 +241,29 @@ TEST_CASE("target latency follows the delivery pattern")
         CHECK(stats.underruns == 0);
         CHECK(stats.targetMs == doctest::Approx(c.expectedMs).epsilon(0.1));
     }
+}
+
+TEST_CASE("an underrun during steady delivery widens the margin")
+{
+    // The consumer stalls (as if its thread was delayed) and then catches up in
+    // one large read while the producer keeps delivering: the buffer really was
+    // too small for that, so the margin must grow.
+    ClockBridge bridge(ClockBridgeConfig{});
+    SineSource source{440.0, 48000.0};
+    std::vector<float> l(4800), r(4800);
+    float* out[2] = {l.data(), r.data()};
+    long long produced = 0;
+    for (int c = 0; c < 48000 * 10 / 128; ++c) {
+        double t = c * 128 / 48000.0;
+        while (produced + 480 <= t * 48000.0) {
+            bridge.write(source.next(480).data(), 480, produced / 48000.0);
+            produced += 480;
+        }
+        int n = (c == 1500) ? 2400 : 128; // one 50 ms catch-up read
+        bridge.read(out, n, t);
+    }
+    brir::ClockBridgeStats stats = bridge.stats();
+    CHECK(stats.underruns == 1);
+    CHECK(stats.marginMs == doctest::Approx(5.0));
+    CHECK(stats.running);
 }

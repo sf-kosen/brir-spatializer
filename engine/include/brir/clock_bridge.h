@@ -144,6 +144,9 @@ private:
     bool fixedDrift_ = false;
     bool running_ = false;
     double primingSeconds_ = 0.0;
+    bool pendingMarginCheck_ = false; // an underrun awaits classification
+    double underrunMarkTime_ = 0.0;
+    std::uint32_t underrunMarkId_ = 0;
     int primingDeliveries_ = 0;
     int fadeRemaining_ = 0;
     int fadeTotal_ = 0;

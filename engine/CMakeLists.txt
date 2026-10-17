@@ -4,7 +4,8 @@ add_library(brir_engine STATIC
     src/spsc_ring.cpp
     src/clock_bridge.cpp
     src/limiter.cpp
-    src/renderer.cpp)
+    src/renderer.cpp
+    src/upmixer.cpp)
 
 target_include_directories(brir_engine PUBLIC include)
 target_link_libraries(brir_engine PRIVATE PFFFT)

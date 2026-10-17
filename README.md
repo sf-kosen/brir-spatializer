@@ -32,13 +32,31 @@ cmake --build build --config Release
 
 The app is `build\app\BrirCinema_artefacts\Release\BRIR Cinema.exe`.
 
+## Cinema BRIRs
+
+The app plays a *cinema set*: `cinema.json` plus one 2-channel (left ear, right
+ear) WAV per speaker feed (L, C, R, Ls, Rs). Generate the default centre-seat set
+(medium cinema, ~3000 m3, RT60 ~0.45 s, small-room X-curve calibration):
+
+```powershell
+python -m venv .venv
+.venv/Scripts/pip install -r tools/cinema_brir/requirements.txt
+.venv/Scripts/python tools/cinema_brir/generate_cinema.py
+```
+
+It needs the KU100 HRIR set (`Assets/HRTF/KU100_TH_Koeln/HRIR_FULL2DEG.sofa`) and
+writes to `Generated/cinema/center_medium/`, which the app finds on first run.
+`tools/render_file` renders any stereo file through the same chain offline.
+
 ## Layout
 
-- `engine/` – JUCE-independent DSP: non-uniform partitioned convolver, clock
-  bridge (drift-compensating resampler), limiter, renderer
+- `engine/` – JUCE-independent DSP: non-uniform partitioned convolver, STFT
+  upmixer (stereo -> L C R Ls Rs), clock bridge (drift-compensating resampler),
+  limiter, renderer
 - `io/` – WASAPI capture (loopback or input endpoint) feeding the clock bridge
 - `app/` – JUCE desktop app
 - `tests/` – unit tests (doctest)
-- `tools/` – `bench_convolver`, `capture_probe` (capture vs. system clock),
-  `output_probe` (full real-time path inside a real output device, muted)
+- `tools/` – `cinema_brir` (BRIR generator), `render_file` (offline render),
+  `bench_convolver`, `capture_probe` (capture vs. system clock), `output_probe`
+  (full real-time path inside a real output device, muted)
 

@@ -11,7 +11,18 @@ if(WIN32 AND BRIR_BUILD_APP)
     target_sources(output_probe PRIVATE output_probe/output_probe.cpp)
     target_compile_definitions(output_probe PRIVATE JUCE_WASAPI=1 JUCE_DIRECTSOUND=0 JUCE_ASIO=0 JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0)
-    target_link_libraries(output_probe PRIVATE brir_io juce::juce_audio_devices
+    target_link_libraries(output_probe PRIVATE brir_io avrt juce::juce_audio_devices juce::juce_audio_formats
         PUBLIC juce::juce_recommended_config_flags)
     target_compile_options(output_probe PRIVATE /utf-8)
+endif()
+
+if(BRIR_BUILD_APP)
+    juce_add_console_app(render_file PRODUCT_NAME "render_file")
+    target_sources(render_file PRIVATE render_file/render_file.cpp)
+    target_compile_definitions(render_file PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
+    target_link_libraries(render_file PRIVATE brir_engine juce::juce_audio_formats
+        PUBLIC juce::juce_recommended_config_flags)
+    if(MSVC)
+        target_compile_options(render_file PRIVATE /utf-8)
+    endif()
 endif()

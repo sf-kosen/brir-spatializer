@@ -59,6 +59,8 @@ public:
     ClockBridge& bridge() noexcept { return *bridge_; }
 
     CaptureStats stats() const noexcept;
+    // Largest gap between consecutive packet arrivals since the last call (ms).
+    double takeMaxDeliveryGapMs() noexcept { return maxDeliveryGapMs_.exchange(0.0); }
     // Records of the first packets after start (up to kPacketLogSize). Read only
     // after stop().
     static constexpr int kPacketLogSize = 8192;
@@ -75,6 +77,7 @@ private:
     std::atomic<int> deviceChannels_{0};
     std::atomic<std::uint64_t> discontinuities_{0};
     std::atomic<std::uint64_t> silenceFills_{0};
+    std::atomic<double> maxDeliveryGapMs_{0.0};
     std::vector<PacketRecord> packetLog_ = std::vector<PacketRecord>(kPacketLogSize);
     std::atomic<int> packetCount_{0};
     void logPacket(double firstFrameTime, int frames, PacketRecord::Kind kind) noexcept;

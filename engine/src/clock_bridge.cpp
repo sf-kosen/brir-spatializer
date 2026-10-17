@@ -20,6 +20,9 @@ constexpr double kResyncThresholdMs = 40.0;
 // With no producer data for this long the timeline extrapolation is meaningless
 // (input stalled); the controller holds its state until data flows again.
 constexpr double kStallSeconds = 0.040;
+// Longest pause between deliveries that still counts as normal delivery when
+// judging an underrun.
+constexpr double kNormalDeliveryPauseSeconds = 0.080;
 // Time constants for moving the target, so gap estimate updates arrive as ramps
 // the loop can follow rather than steps that kick the drift estimate. Raising
 // the target protects against underruns and is rare once settled, so it is
@@ -318,6 +321,18 @@ void ClockBridge::read(float* const* output, int frames, double time) noexcept
         FillSample sample = sampleFill(time);
         double dt = frames / config_.outputRate;
         double consumed = frames * baseRatio_;
+        if (pendingMarginCheck_ && sample.markId != underrunMarkId_) {
+            // Data is flowing again. A short pause since the last delivery means
+            // the buffer ran dry during normal delivery: widen the margin. A long
+            // one means the producer had stopped (e.g. playback paused); more
+            // margin would only add latency for good.
+            pendingMarginCheck_ = false;
+            double pause = (time - sample.sinceMark) - underrunMarkTime_;
+            if (pause <= kNormalDeliveryPauseSeconds) {
+                double maxTarget = config_.maxTargetLatencyMs * config_.inputRate / 1000.0;
+                marginFrames_ = std::min(maxTarget, marginFrames_ + config_.latencyStepMs * config_.inputRate / 1000.0);
+            }
+        }
         trackGap(sample, consumed, dt);
         targetFrames_ = desiredTarget() + config_.startupCushionMs * config_.inputRate / 1000.0;
         primingSeconds_ += dt;
@@ -353,9 +368,12 @@ void ClockBridge::read(float* const* output, int frames, double time) noexcept
             primingDeliveries_ = 0;
             resetResampler();
             underruns_.fetch_add(1, std::memory_order_relaxed);
-            double maxTarget = config_.maxTargetLatencyMs * config_.inputRate / 1000.0;
-            marginFrames_ = std::min(maxTarget, marginFrames_ + config_.latencyStepMs * config_.inputRate / 1000.0);
-            targetFrames_ = std::min(maxTarget, marginFrames_ + peakGap_);
+            // Whether this means "buffer too small" is decided when data arrives
+            // again: see the priming branch.
+            double sinceMark = 0.0;
+            timelineFill(time, &sinceMark, &underrunMarkId_);
+            underrunMarkTime_ = time - sinceMark;
+            pendingMarginCheck_ = true;
             break;
         }
         offset += n;

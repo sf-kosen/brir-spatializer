@@ -19,6 +19,7 @@ target_compile_definitions(BrirCinema PRIVATE
 target_link_libraries(BrirCinema
     PRIVATE
         brir_io
+        avrt
         juce::juce_audio_utils
         juce::juce_audio_formats
     PUBLIC

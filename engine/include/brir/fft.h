@@ -43,6 +43,9 @@ public:
     void forward(const float* input, float* spectrum) noexcept;
     // Unnormalised: forward followed by inverse scales by size().
     void inverse(const float* spectrum, float* output) noexcept;
+    // Ordered layout for per-bin work: [DC, Nyquist, re1, im1, re2, im2, ...].
+    void forwardOrdered(const float* input, float* spectrum) noexcept;
+    void inverseOrdered(const float* spectrum, float* output) noexcept;
     // acc += a * b * scale
     void multiplyAccumulate(const float* a, const float* b, float* acc, float scale) const noexcept;
 

@@ -9,9 +9,9 @@
 #include <memory>
 #include <vector>
 
-// Single-window app: pick a capture source and an output device, load a BRIR,
-// and listen. The capture thread feeds a ClockBridge that the output device
-// callback drains into the renderer.
+// Single-window app: pick a capture source and an output device, load a cinema
+// set, and listen. The capture thread feeds a ClockBridge that the output device
+// callback drains into the renderer (upmix -> cinema BRIRs -> limiter).
 class MainComponent : public juce::Component,
                       private juce::AudioIODeviceCallback,
                       private juce::ChangeListener,
@@ -37,20 +37,24 @@ private:
     void refreshInputs();
     void startCapture();
     void stopCapture();
-    void chooseBrir();
-    void loadBrir(const juce::File& file);
+    void chooseCinema();
+    void refreshCinemas();
+    void loadCinema(const juce::File& file);
     void rebuildConvolver();
+    void applyUpmixSettings();
     void saveSettings();
+    void logDiagnostics();
     void showError(const juce::String& message);
 
     juce::AudioDeviceManager deviceManager_;
     std::unique_ptr<juce::PropertiesFile> settings_;
 
-    juce::Label inputLabel_, outputLabel_, brirTitle_, brirLabel_, gainLabel_, statusLabel_;
-    juce::ComboBox inputBox_;
+    juce::Label inputLabel_, outputLabel_, cinemaTitle_, cinemaLabel_, gainLabel_, centerLabel_, surroundLabel_,
+        statusLabel_;
+    juce::ComboBox inputBox_, cinemaBox_;
     juce::TextButton refreshButton_, startButton_, loadButton_;
-    juce::ToggleButton bypassToggle_;
-    juce::Slider gainSlider_;
+    juce::ToggleButton bypassToggle_, upmixToggle_;
+    juce::Slider gainSlider_, centerSlider_, surroundSlider_;
     std::unique_ptr<juce::AudioDeviceSelectorComponent> outputSelector_;
     std::unique_ptr<juce::FileChooser> fileChooser_;
 
@@ -59,14 +63,20 @@ private:
     std::atomic<brir::ClockBridge*> bridge_{nullptr};
     std::atomic<int> callbacksInFlight_{0};
 
-    // Owned by the message thread; only swapped while the device is stopped.
+    // Owned by the message thread; only replaced while the device is stopped.
     std::unique_ptr<brir::Renderer> renderer_;
     double deviceRate_ = 0.0;
-    int deviceBlock_ = 0;
     std::vector<float> left_, right_;
 
-    // Loaded BRIR as an IR matrix (feeds x ears) and its sample rate.
-    brir::IrMatrix brir_;
-    double brirRate_ = 0.0;
-    juce::String brirName_;
+    // Loaded cinema set: one BRIR pair per upmix feed, at cinemaRate_.
+    brir::IrMatrix cinema_;
+    double cinemaRate_ = 0.0;
+    juce::String cinemaName_;
+    juce::Array<juce::File> cinemaFiles_; // entries of cinemaBox_
+
+    // Once-a-second diagnostics log (%APPDATA%/BrirCinema/diagnostics.csv),
+    // restarted whenever capture starts.
+    std::unique_ptr<juce::FileOutputStream> diagnostics_;
+    double diagnosticsStart_ = 0.0;
+    int timerTicks_ = 0;
 };
