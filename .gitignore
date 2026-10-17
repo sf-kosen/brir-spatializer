@@ -1,12 +1,14 @@
 # Build outputs
-**/bin/
-**/obj/
-**/publish/
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json
 
-# Visual Studio
+# IDE
 .vs/
+.vscode/
+.idea/
 *.user
-*.suo
 
 # Python
 __pycache__/
@@ -18,10 +20,6 @@ venv/
 .DS_Store
 Thumbs.db
 
-# Runtime settings
-**/Settings/last_settings.json
-
-# Generated assets / external binaries
+# Large / external assets (HRTF, generated BRIRs)
 Assets/
 Generated/
-ffmpeg.exe
