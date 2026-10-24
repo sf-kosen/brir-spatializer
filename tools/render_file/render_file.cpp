@@ -1,8 +1,9 @@
 // Renders a stereo audio file through the same chain as the app (upmix ->
 // cinema BRIRs -> limiter) into a binaural WAV, for listening and analysis.
 //
-//   render_file <cinema.json> <input> <output.wav> [--no-upmix] [--center N] [--surround N] [--feeds feeds.wav]
+//   render_file <cinema.json> <input> <output.wav> [--no-upmix] [--center N] [--surround N] [--sub dB] [--feeds feeds.wav]
 //
+// --sub sets the subwoofer level when the set has an LFE feed (default +4 dB).
 // --feeds also writes the five upmix feeds (L C R Ls Rs) for analysis.
 
 #include "brir/renderer.h"
@@ -17,15 +18,14 @@ namespace {
 bool loadCinema(const juce::File& json, double rate, brir::IrMatrix& irs)
 {
     juce::var meta = juce::JSON::parse(json);
-    static const char* const names[brir::Upmixer::kFeeds] = {"L", "C", "R", "Ls", "Rs"};
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
-    irs.assign(brir::Upmixer::kFeeds, std::vector<std::vector<float>>(2));
+    irs.assign(brir::Renderer::kFeeds, std::vector<std::vector<float>>(2));
     juce::Array<juce::var>* feeds = meta["feeds"].getArray();
     if (!feeds) return false;
     for (const juce::var& feed : *feeds) {
-        for (int f = 0; f < brir::Upmixer::kFeeds; ++f) {
-            if (feed["name"].toString() != names[f]) continue;
+        for (int f = 0; f < brir::Renderer::kFeeds; ++f) {
+            if (feed["name"].toString() != brir::Renderer::kFeedNames[f]) continue;
             std::unique_ptr<juce::AudioFormatReader> reader(
                 formats.createReaderFor(json.getSiblingFile(feed["file"].toString())));
             if (!reader || reader->numChannels != 2 || std::abs(reader->sampleRate - rate) > 0.5) return false;
@@ -45,19 +45,20 @@ bool loadCinema(const juce::File& json, double rate, brir::IrMatrix& irs)
 int main(int argc, char** argv)
 {
     if (argc < 4) {
-        std::fprintf(stderr, "usage: render_file <cinema.json> <input> <output.wav> [--no-upmix] [--center N] [--surround N]\n");
+        std::fprintf(stderr, "usage: render_file <cinema.json> <input> <output.wav> [--no-upmix] [--center N] [--surround N] [--sub dB]\n");
         return 1;
     }
     juce::File cinema(juce::File::getCurrentWorkingDirectory().getChildFile(juce::String::fromUTF8(argv[1])));
     juce::File input(juce::File::getCurrentWorkingDirectory().getChildFile(juce::String::fromUTF8(argv[2])));
     juce::File output(juce::File::getCurrentWorkingDirectory().getChildFile(juce::String::fromUTF8(argv[3])));
     bool upmix = true;
-    float center = 1.0f, surround = 0.6f;
+    float center = 1.0f, surround = 0.3f, subDb = 4.0f;
     juce::File feedsFile;
     for (int i = 4; i < argc; ++i) {
         if (std::strcmp(argv[i], "--no-upmix") == 0) upmix = false;
         else if (std::strcmp(argv[i], "--center") == 0 && i + 1 < argc) center = std::stof(argv[++i]) / 100.0f;
         else if (std::strcmp(argv[i], "--surround") == 0 && i + 1 < argc) surround = std::stof(argv[++i]) / 100.0f;
+        else if (std::strcmp(argv[i], "--sub") == 0 && i + 1 < argc) subDb = std::stof(argv[++i]);
         else if (std::strcmp(argv[i], "--feeds") == 0 && i + 1 < argc)
             feedsFile = juce::File::getCurrentWorkingDirectory().getChildFile(juce::String::fromUTF8(argv[++i]));
     }
@@ -86,6 +87,7 @@ int main(int argc, char** argv)
     renderer.upmixer().setEnabled(upmix);
     renderer.upmixer().setCenterAmount(center);
     renderer.upmixer().setSurroundAmount(surround);
+    renderer.setBassManagement(!irs[brir::Renderer::kLfe][0].empty(), subDb);
     brir::ConvolverConfig config;
     config.threaded = false; // offline: deterministic, no deadlines
     renderer.setConvolver(std::make_unique<brir::Convolver>(brir::Renderer::kFeeds, 2, irs, config));

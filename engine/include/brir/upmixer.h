@@ -13,9 +13,9 @@ namespace brir {
 // Per frequency bin, the smoothed channel covariance splits each channel into a
 // primary part (correlated between L and R) and an ambient part (uncorrelated,
 // equal power on both sides):
-//   - primary sound is steered to L/C/R by its level ratio (constant power),
-//     moving to C only in proportion to coherence^4, so dialogue goes to C while
-//     partially correlated music keeps its stereo image;
+//   - primary sound is steered to L/C/R by its level ratio (constant power,
+//     pairwise), so centred dialogue and music play from C and the stereo
+//     width is kept;
 //     primary sound that is out of phase between L and R goes to the surrounds,
 //     as in matrix-encoded (Lt/Rt) film soundtracks;
 //   - ambience goes partly to the surrounds, keeping each side's own phase so
@@ -78,7 +78,7 @@ private:
     int pos_ = 0; // position within the current hop
 
     std::atomic<float> centerAmount_{1.0f};
-    std::atomic<float> surroundAmount_{0.6f};
+    std::atomic<float> surroundAmount_{0.3f};
     std::atomic<bool> enabled_{true};
 };
 

@@ -3,7 +3,7 @@
 // Loads a cinema set (cinema.json + one 2-channel WAV per feed) for the tools.
 
 #include "brir/convolver.h"
-#include "brir/upmixer.h"
+#include "brir/renderer.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -14,15 +14,14 @@ namespace brir::tools {
 inline bool loadCinema(const juce::File& json, double rate, IrMatrix& irs)
 {
     juce::var meta = juce::JSON::parse(json);
-    static const char* const names[Upmixer::kFeeds] = {"L", "C", "R", "Ls", "Rs"};
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
-    irs.assign(Upmixer::kFeeds, std::vector<std::vector<float>>(2));
+    irs.assign(Renderer::kFeeds, std::vector<std::vector<float>>(2));
     juce::Array<juce::var>* feeds = meta["feeds"].getArray();
     if (!feeds) return false;
     for (const juce::var& feed : *feeds) {
-        for (int f = 0; f < Upmixer::kFeeds; ++f) {
-            if (feed["name"].toString() != names[f]) continue;
+        for (int f = 0; f < Renderer::kFeeds; ++f) {
+            if (feed["name"].toString() != Renderer::kFeedNames[f]) continue;
             std::unique_ptr<juce::AudioFormatReader> reader(
                 formats.createReaderFor(json.getSiblingFile(feed["file"].toString())));
             if (!reader || reader->numChannels != 2) return false;

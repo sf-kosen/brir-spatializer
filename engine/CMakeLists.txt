@@ -5,7 +5,8 @@ add_library(brir_engine STATIC
     src/clock_bridge.cpp
     src/limiter.cpp
     src/renderer.cpp
-    src/upmixer.cpp)
+    src/upmixer.cpp
+    src/headphone_eq.cpp)
 
 target_include_directories(brir_engine PUBLIC include)
 target_link_libraries(brir_engine PRIVATE PFFFT)

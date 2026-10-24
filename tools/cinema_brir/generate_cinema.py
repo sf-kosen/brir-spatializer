@@ -1,7 +1,7 @@
 """Generate binaural room impulse responses for the centre seat of a cinema.
 
 The output is a "cinema set": one 2-channel WAV (left ear, right ear) per
-speaker feed (L, C, R, Ls, Rs) plus cinema.json, ready for the BRIR Cinema app.
+speaker feed (L, C, R, Ls, Rs, LFE) plus cinema.json, ready for the BRIR Cinema app.
 
 Model
 -----
@@ -25,6 +25,9 @@ microphone" render of the same scene:
   - each feed's steady-state response is equalised to the target curve
     (SMPTE X-curve by default),
   - screen channels are level-matched, surround arrays sit 3 dB below,
+  - the subwoofers (LFE feed, fed by the app's bass management) are flat over
+    their band and level-matched to the screen channels; the app sets their
+    level relative to the mains,
   - surround arrays are delayed so their sound arrives with the screen sound,
   - the common propagation delay is removed (no added latency),
   - overall gain: the C feed carries 0.5 energy per ear, so a centred source
@@ -60,6 +63,7 @@ class Speaker:
     aim: np.ndarray  # point the speaker is aimed at
     directivity: np.ndarray  # per-band exponent p of ((1 + cos)/2)^p
     highpass_hz: float
+    lowpass_hz: float | None = None
 
 
 @dataclass
@@ -84,6 +88,7 @@ class Cinema:
     listener: np.ndarray
     feeds: dict[str, list[Speaker]]
     surround_feeds: tuple[str, ...] = ("Ls", "Rs")
+    bass_feeds: tuple[str, ...] = ("LFE",)
     surround_level_db: float = -3.0
     target_curve: str = "xcurve-small"
     timbre: str = "neutral"  # "neutral": flatten the overall tilt; "cinema": keep it
@@ -140,6 +145,12 @@ def default_cinema(name: str = "中央席・中規模シアター", seat_depth: 
         (left if x < w / 2 else right).append(spk)
     feeds["Ls"] = left
     feeds["Rs"] = right
+
+    # Two subwoofers on the floor behind the screen, omnidirectional at the
+    # frequencies they play.
+    sub_p = np.zeros(BANDS.size)
+    feeds["LFE"] = [Speaker(f"Sub{i}", np.array([w / 2 + dx, 0.4, 0.6]), listener, sub_p, 20.0, 200.0)
+                    for i, dx in enumerate((-1.5, 1.5))]
     return Cinema(name, room, listener, feeds)
 
 
@@ -397,13 +408,16 @@ def render_speaker(cinema: Cinema, speaker: Speaker, hrtf: Hrtf | None, diffuse:
     out = render_tail(cinema, speaker, diffuse, fs, length, rng, fade_in)
     n = min(n_early, length)
     out[:, :n] += early[:, :n] * fade_out[:n]
-    return highpass(out, speaker.highpass_hz, fs)
+    out = butterworth(out, speaker.highpass_hz, fs, "highpass")
+    if speaker.lowpass_hz:
+        out = butterworth(out, speaker.lowpass_hz, fs, "lowpass")
+    return out
 
 
-def highpass(x: np.ndarray, hz: float, fs: int, order: int = 4) -> np.ndarray:
+def butterworth(x: np.ndarray, hz: float, fs: int, kind: str, order: int = 4) -> np.ndarray:
     from scipy.signal import butter, sosfilt
 
-    sos = butter(order, hz, "highpass", fs=fs, output="sos")
+    sos = butter(order, hz, kind, fs=fs, output="sos")
     return sosfilt(sos, x, axis=-1)
 
 
@@ -449,11 +463,11 @@ def minimum_phase_fir(magnitude: np.ndarray, n_fft: int, taps: int) -> np.ndarra
 
 
 def calibration_filter(omni: np.ndarray, fs: int, kind: str, n_fft: int = 65536,
-                       eq_range=(63.0, 16000.0), max_db: float = 10.0):
-    """EQ that brings the omni steady-state response to the target, and its 500-2k level."""
+                       eq_range=(63.0, 16000.0), ref_band=(500.0, 2000.0), max_db: float = 10.0):
+    """EQ that brings the omni steady-state response to the target, and its level in ref_band."""
     freqs = np.fft.rfftfreq(n_fft, 1.0 / fs)
     power = third_octave_smooth(freqs, np.abs(np.fft.rfft(omni, n_fft)) ** 2)
-    ref = band_level(freqs, power)
+    ref = band_level(freqs, power, *ref_band)
     measured_db = 10 * np.log10(np.maximum(power / ref, 1e-12))
     correction = np.clip(target_curve(freqs, kind) - measured_db, -max_db, max_db)
     # Hold the correction flat outside the range we equalise.
@@ -548,7 +562,11 @@ def generate(cinema: Cinema, hrtf_path: Path, out_dir: Path, fs: int = 48000, se
     # Equalise and level-align each feed with its omni measurement.
     gains = {}
     for feed in cinema.feeds:
-        fir, level = calibration_filter(omni[feed][0], fs, cinema.target_curve)
+        if feed in cinema.bass_feeds:
+            # Flat over the subwoofer band, levelled where it overlaps the mains.
+            fir, level = calibration_filter(omni[feed][0], fs, "flat", eq_range=(25.0, 120.0), ref_band=(40.0, 100.0))
+        else:
+            fir, level = calibration_filter(omni[feed][0], fs, cinema.target_curve)
         offset_db = cinema.surround_level_db if feed in cinema.surround_feeds else 0.0
         gain = 10 ** (offset_db / 20) / math.sqrt(level)
         binaural[feed] = apply_fir(binaural[feed], fir) * gain

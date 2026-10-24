@@ -143,6 +143,24 @@ TEST_CASE("decorrelated ambience is split between front and surrounds")
     CHECK(e[Upmixer::C] < 0.05);
 }
 
+TEST_CASE("a centred source mixed with ambience still plays from C")
+{
+    // Typical music: a centred part plus uncorrelated ambience (coherence ~0.6).
+    // A phantom centre from L/R alone would colour the binaural render.
+    Upmixer upmixer(kRate);
+    upmixer.setSurroundAmount(0.0f);
+    std::vector<float> centre = noise(10), ambL = noise(11), ambR = noise(12);
+    std::vector<float> l(kLength), r(kLength);
+    for (std::size_t i = 0; i < static_cast<std::size_t>(kLength); ++i) {
+        l[i] = centre[i] + 0.8f * ambL[i];
+        r[i] = centre[i] + 0.8f * ambR[i];
+    }
+    auto e = shares(run(upmixer, l, r));
+    // Centre energy is 1 / (1 + 0.64) of the total; most of it reaches C.
+    CHECK(e[Upmixer::C] > 0.45);
+    CHECK(e[Upmixer::L] == doctest::Approx(e[Upmixer::R]).epsilon(0.1));
+}
+
 TEST_CASE("total energy is preserved for a mixed scene")
 {
     Upmixer upmixer(kRate);

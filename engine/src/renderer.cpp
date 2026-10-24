@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <numbers>
 #include <stdexcept>
 
 namespace brir {
@@ -12,7 +13,22 @@ constexpr double kSwapFadeMs = 50.0;
 constexpr double kBypassFadeMs = 20.0;
 constexpr double kGainSmoothingMs = 20.0;
 constexpr int kMaxDryDelay = 8192; // longest supported convolver head block
+constexpr double kCrossoverHz = 80.0;
 } // namespace
+
+// RBJ cookbook low/high-pass with Q = 1/sqrt2 (Butterworth); two in series make
+// a Linkwitz-Riley crossover whose outputs sum to an allpass.
+Renderer::Biquad Renderer::butterworth(double frequency, double sampleRate, bool highpass)
+{
+    double w = 2.0 * std::numbers::pi * frequency / sampleRate;
+    double alpha = std::sin(w) / std::sqrt(2.0);
+    double c = std::cos(w);
+    double a0 = 1.0 + alpha;
+    double b1 = highpass ? -(1.0 + c) : 1.0 - c;
+    double b0 = highpass ? (1.0 + c) / 2.0 : (1.0 - c) / 2.0;
+    return {static_cast<float>(b0 / a0), static_cast<float>(b1 / a0), static_cast<float>(b0 / a0),
+            static_cast<float>(-2.0 * c / a0), static_cast<float>((1.0 - alpha) / a0)};
+}
 
 Renderer::Renderer(double sampleRate, int maxBlockFrames)
     : sampleRate_(sampleRate),
@@ -21,7 +37,10 @@ Renderer::Renderer(double sampleRate, int maxBlockFrames)
       wetStep_(static_cast<float>(1000.0 / (kBypassFadeMs * sampleRate))),
       gainCoef_(static_cast<float>(1.0 - std::exp(-1000.0 / (kGainSmoothingMs * sampleRate)))),
       upmixer_(sampleRate),
-      limiter_(2, sampleRate)
+      headphoneEq_(sampleRate),
+      limiter_(2, sampleRate),
+      lowpass_(butterworth(kCrossoverHz, sampleRate, false)),
+      highpass_(butterworth(kCrossoverHz, sampleRate, true))
 {
     for (auto* buffers : {&dry_, &wet_, &fade_})
         buffers->assign(2, std::vector<float>(static_cast<std::size_t>(maxBlockFrames), 0.0f));
@@ -61,6 +80,12 @@ void Renderer::setOutputGainDb(float db) noexcept
     outputGain_.store(std::pow(10.0f, db / 20.0f), std::memory_order_relaxed);
 }
 
+void Renderer::setBassManagement(bool enabled, float subGainDb) noexcept
+{
+    subGain_.store(std::pow(10.0f, subGainDb / 20.0f), std::memory_order_relaxed);
+    bassManaged_.store(enabled, std::memory_order_relaxed);
+}
+
 int Renderer::latencySamples() const noexcept
 {
     return upmixer_.latencySamples() + convolverLatency_ + limiter_.latencySamples();
@@ -75,6 +100,34 @@ void Renderer::delayDry(const float* const* input, int frames) noexcept
             slot = input[ch][i];
         }
         dryDelayPos_ = dryDelayPos_ + 1 == dryDelaySamples_ ? 0 : dryDelayPos_ + 1;
+    }
+}
+
+void Renderer::manageBass(int frames) noexcept
+{
+    float* lfe = feeds_[kLfe].data();
+    std::fill_n(lfe, frames, 0.0f);
+    const float mixTarget = bassManaged_.load(std::memory_order_relaxed) ? 1.0f : 0.0f;
+    const float gainTarget = subGain_.load(std::memory_order_relaxed);
+    // Filters always run so switching doesn't start from cold state.
+    auto run = [](const Biquad& q, float (&z)[2], float x) {
+        float y = q.b0 * x + z[0];
+        z[0] = q.b1 * x - q.a1 * y + z[1];
+        z[1] = q.b2 * x - q.a2 * y;
+        return y;
+    };
+    for (int i = 0; i < frames; ++i) {
+        bassMix_ = mixTarget > bassMix_ ? std::min(mixTarget, bassMix_ + wetStep_) : std::max(mixTarget, bassMix_ - wetStep_);
+        subGainSmoothed_ += (gainTarget - subGainSmoothed_) * gainCoef_;
+        float low = 0.0f;
+        for (int f = 0; f < Upmixer::kFeeds; ++f) {
+            float& x = feeds_[static_cast<std::size_t>(f)][static_cast<std::size_t>(i)];
+            float lp = run(lowpass_, lowState_[f][1], run(lowpass_, lowState_[f][0], x));
+            float hp = run(highpass_, highState_[f][1], run(highpass_, highState_[f][0], x));
+            low += lp;
+            x += (hp - x) * bassMix_;
+        }
+        lfe[i] = low * bassMix_ * subGainSmoothed_;
     }
 }
 
@@ -101,9 +154,10 @@ void Renderer::process(const float* const* input, float* const* output, int fram
 
     delayDry(input, frames);
 
-    float* feeds[kFeeds];
-    for (int f = 0; f < kFeeds; ++f) feeds[f] = feeds_[static_cast<std::size_t>(f)].data();
+    float* feeds[Upmixer::kFeeds];
+    for (int f = 0; f < Upmixer::kFeeds; ++f) feeds[f] = feeds_[static_cast<std::size_t>(f)].data();
     upmixer_.process(input, feeds, frames);
+    manageBass(frames);
 
     float* wet[2] = {wet_[0].data(), wet_[1].data()};
     if (current_) {
@@ -144,6 +198,7 @@ void Renderer::process(const float* const* input, float* const* output, int fram
                          (fadingOut_ ? fadingOut_->lateBlockCount() : 0);
     lateBlocks_.store(late, std::memory_order_relaxed);
 
+    headphoneEq_.process(output, frames);
     limiter_.process(output, frames);
     limiterGainDb_.store(limiter_.currentGainDb(), std::memory_order_relaxed);
 }

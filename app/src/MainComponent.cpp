@@ -1,5 +1,7 @@
 #include "MainComponent.h"
 
+#include "HeadphoneProfiles.h"
+
 #include <cmath>
 #include <thread>
 
@@ -28,10 +30,9 @@ bool readCinema(const juce::File& json, brir::IrMatrix& irs, double& rate, juce:
         return false;
     }
 
-    static const char* const feedNames[brir::Upmixer::kFeeds] = {"L", "C", "R", "Ls", "Rs"};
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
-    irs.assign(brir::Upmixer::kFeeds, std::vector<std::vector<float>>(2));
+    irs.assign(brir::Renderer::kFeeds, std::vector<std::vector<float>>(2));
     rate = 0.0;
     int found = 0;
 
@@ -39,8 +40,8 @@ bool readCinema(const juce::File& json, brir::IrMatrix& irs, double& rate, juce:
         for (const juce::var& feed : *feeds) {
             juce::String feedName = feed["name"].toString();
             int index = -1;
-            for (int f = 0; f < brir::Upmixer::kFeeds; ++f)
-                if (feedName == feedNames[f]) index = f;
+            for (int f = 0; f < brir::Renderer::kFeeds; ++f)
+                if (feedName == brir::Renderer::kFeedNames[f]) index = f;
             if (index < 0) continue; // feeds this app doesn't drive (yet)
 
             juce::File wav = json.getSiblingFile(feed["file"].toString());
@@ -66,7 +67,7 @@ bool readCinema(const juce::File& json, brir::IrMatrix& irs, double& rate, juce:
         }
     }
     if (found == 0) {
-        error = jp("映画館セットにL/C/R/Ls/Rsのいずれも含まれていません。");
+        error = jp("映画館セットにL/C/R/Ls/Rs/LFEのいずれも含まれていません。");
         return false;
     }
     name = meta["name"].toString();
@@ -130,7 +131,38 @@ MainComponent::MainComponent()
     };
     bypassToggle_.setButtonText(jp("バイパス（素の音と比較）"));
     upmixToggle_.setButtonText(jp("アップミックス"));
+    headphoneLabel_.setText(jp("イヤホン補正"), juce::dontSendNotification);
+    headphoneBox_.addItem(jp("なし"), 1);
+    headphoneBox_.addItem("final E3000", 2);
+    headphoneBox_.setSelectedId(settings_->getIntValue("headphone", 1), juce::dontSendNotification);
+    headphoneBox_.onChange = [this] {
+        settings_->setValue("headphone", headphoneBox_.getSelectedId());
+        applyHeadphoneEq();
+    };
+    bassLabel_.setText(jp("低音"), juce::dontSendNotification);
+    bassSlider_.setRange(0.0, 15.0, 0.5);
+    bassSlider_.setTextValueSuffix(" dB");
+    // Low shelf on top of the neutral (diffuse-field) correction; around +8 dB
+    // is close to what most listeners prefer on in-ears.
+    bassSlider_.setValue(settings_->getDoubleValue("bassDb", 8.0), juce::dontSendNotification);
+    bassSlider_.onValueChange = [this] {
+        settings_->setValue("bassDb", bassSlider_.getValue());
+        applyHeadphoneEq();
+    };
     upmixToggle_.setToggleState(settings_->getBoolValue("upmix", true), juce::dontSendNotification);
+    subToggle_.setButtonText(jp("サブウーファー"));
+    subToggle_.setToggleState(settings_->getBoolValue("subwoofer", true), juce::dontSendNotification);
+    subSlider_.setRange(-6.0, 12.0, 0.5);
+    subSlider_.setTextValueSuffix(" dB");
+    // Level relative to the mains; a little hot, as many cinemas run their subs.
+    subSlider_.setValue(settings_->getDoubleValue("subDb", 4.0), juce::dontSendNotification);
+    auto subChanged = [this] {
+        settings_->setValue("subwoofer", subToggle_.getToggleState());
+        settings_->setValue("subDb", subSlider_.getValue());
+        applyBassManagement();
+    };
+    subToggle_.onClick = subChanged;
+    subSlider_.onValueChange = subChanged;
 
     gainSlider_.setRange(-24.0, 12.0, 0.5);
     gainSlider_.setTextValueSuffix(" dB");
@@ -142,12 +174,13 @@ MainComponent::MainComponent()
         slider->setTextValueSuffix(" %");
     }
     centerSlider_.setValue(settings_->getDoubleValue("centerAmount", 100.0), juce::dontSendNotification);
-    surroundSlider_.setValue(settings_->getDoubleValue("surroundAmount", 60.0), juce::dontSendNotification);
+    // Kept low: in a cinema most of the sound comes from the screen.
+    surroundSlider_.setValue(settings_->getDoubleValue("ambienceToSurround", 30.0), juce::dontSendNotification);
 
     for (auto* c : std::initializer_list<juce::Component*>{
              &inputLabel_, &outputLabel_, &cinemaTitle_, &cinemaLabel_, &gainLabel_, &centerLabel_, &surroundLabel_,
              &statusLabel_, &inputBox_, &cinemaBox_, &refreshButton_, &startButton_, &loadButton_, &bypassToggle_, &upmixToggle_,
-             &gainSlider_, &centerSlider_, &surroundSlider_})
+             &gainSlider_, &centerSlider_, &surroundSlider_, &headphoneLabel_, &headphoneBox_, &bassLabel_, &bassSlider_, &subToggle_, &subSlider_})
         addAndMakeVisible(c);
 
     refreshButton_.onClick = [this] { refreshInputs(); };
@@ -167,7 +200,7 @@ MainComponent::MainComponent()
         applyUpmixSettings();
         settings_->setValue("upmix", upmixToggle_.getToggleState());
         settings_->setValue("centerAmount", centerSlider_.getValue());
-        settings_->setValue("surroundAmount", surroundSlider_.getValue());
+        settings_->setValue("ambienceToSurround", surroundSlider_.getValue());
     };
     upmixToggle_.onClick = upmixChanged;
     centerSlider_.onValueChange = upmixChanged;
@@ -188,7 +221,7 @@ MainComponent::MainComponent()
     if (!cinema.existsAsFile() && !cinemaFiles_.isEmpty()) cinema = cinemaFiles_[0];
     if (cinema.existsAsFile()) loadCinema(cinema);
 
-    setSize(760, 700);
+    setSize(760, 776);
     startTimerHz(10);
 }
 
@@ -238,6 +271,17 @@ void MainComponent::resized()
     centerSlider_.setBounds(centerArea);
     surroundLabel_.setBounds(upmixRow.removeFromLeft(80));
     surroundSlider_.setBounds(upmixRow);
+
+    auto subRow = row(28);
+    subToggle_.setBounds(subRow.removeFromLeft(140));
+    subSlider_.setBounds(subRow);
+
+    auto headphoneRow = row(28);
+    headphoneLabel_.setBounds(headphoneRow.removeFromLeft(100));
+    headphoneBox_.setBounds(headphoneRow.removeFromLeft(220));
+    headphoneRow.removeFromLeft(16);
+    bassLabel_.setBounds(headphoneRow.removeFromLeft(50));
+    bassSlider_.setBounds(headphoneRow);
 
     auto controls = row(28);
     bypassToggle_.setBounds(controls.removeFromLeft(240));
@@ -357,12 +401,41 @@ void MainComponent::loadCinema(const juce::File& file)
     juce::String name, error;
     if (!readCinema(file, irs, rate, name, error)) return showError(error);
 
+    cinemaHasLfe_ = !irs[brir::Renderer::kLfe][0].empty();
     cinema_ = std::move(irs);
     cinemaRate_ = rate;
     cinemaName_ = name.isNotEmpty() ? name : file.getParentDirectory().getFileName();
     settings_->setValue("cinemaPath", file.getFullPathName());
     cinemaBox_.setSelectedItemIndex(cinemaFiles_.indexOf(file), juce::dontSendNotification);
+    applyBassManagement();
     rebuildConvolver();
+}
+
+void MainComponent::applyBassManagement()
+{
+    // Older sets have no LFE feed; their mains keep the full range.
+    subToggle_.setEnabled(cinemaHasLfe_);
+    subSlider_.setEnabled(cinemaHasLfe_ && subToggle_.getToggleState());
+    if (renderer_)
+        renderer_->setBassManagement(cinemaHasLfe_ && subToggle_.getToggleState(), static_cast<float>(subSlider_.getValue()));
+}
+
+void MainComponent::applyHeadphoneEq()
+{
+    bool on = headphoneBox_.getSelectedId() == 2;
+    bassSlider_.setEnabled(on);
+    if (!renderer_) return;
+    if (!on) {
+        renderer_->headphoneEq().setProfile({}, 0.0f);
+        return;
+    }
+    std::vector<brir::EqBand> bands(headphone_profiles::final_e3000.begin(), headphone_profiles::final_e3000.end());
+    bands.push_back({brir::EqBand::LowShelf, 120.0f, static_cast<float>(bassSlider_.getValue()), 0.7f});
+    // Loudness-matched rather than peak-safe: the correction cuts the bass
+    // heavily, so a peak-based preamp made everything ~10 dB quieter. The
+    // output limiter catches the rare overs in the boosted presence region.
+    float preampDb = -std::max(0.0f, brir::HeadphoneEq::averageGainDb(bands, 48000.0));
+    renderer_->headphoneEq().setProfile(bands, preampDb);
 }
 
 void MainComponent::applyUpmixSettings()
@@ -422,6 +495,8 @@ void MainComponent::audioDeviceAboutToStart(juce::AudioIODevice* device)
         renderer_->setBypass(bypassToggle_.getToggleState());
         renderer_->setOutputGainDb(static_cast<float>(gainSlider_.getValue()));
         applyUpmixSettings();
+        applyHeadphoneEq();
+        applyBassManagement();
     }
 
     juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<MainComponent>(this), rateChanged] {

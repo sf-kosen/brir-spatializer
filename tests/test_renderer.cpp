@@ -168,3 +168,31 @@ TEST_CASE("renderer upmixes before convolving")
     double left = measure(1.0f, 0.0f);
     CHECK(centred > 100.0 * left);
 }
+
+TEST_CASE("bass management moves the lows to LFE and keeps the sum flat")
+{
+    // Upmix off: the left channel arrives on feed L. Measures the steady-state
+    // RMS at the left ear relative to the input, with or without the LFE feed
+    // reaching it.
+    auto measure = [](double frequency, bool lfeAudible, float subGainDb) {
+        brir::IrMatrix irs(brir::Renderer::kFeeds, std::vector<std::vector<float>>(2));
+        irs[brir::Upmixer::L][0] = {1.0f};
+        if (lfeAudible) irs[brir::Renderer::kLfe][0] = {1.0f};
+        auto renderer = passthroughRenderer();
+        renderer->setBassManagement(true, subGainDb);
+        REQUIRE(renderer->setConvolver(std::make_unique<brir::Convolver>(brir::Renderer::kFeeds, 2, irs)));
+        Stereo s = sine(48000, 0.2f, frequency);
+        std::fill(s[1].begin(), s[1].end(), 0.0f); // the LFE feed sums both sides
+        inBlocks(s, 480, [&](float* const* io, int n) { renderer->process(io, io, n); });
+        double e = 0.0;
+        for (std::size_t i = 24000; i < s[0].size(); ++i) e += s[0][i] * s[0][i];
+        double rms = std::sqrt(e / 24000.0);
+        return 20.0 * std::log10(rms / (0.2 / std::sqrt(2.0)));
+    };
+    CHECK(measure(40.0, true, 0.0f) == doctest::Approx(0.0).epsilon(0.05).scale(1.0));
+    CHECK(measure(80.0, true, 0.0f) == doctest::Approx(0.0).epsilon(0.05).scale(1.0));
+    CHECK(measure(1000.0, true, 0.0f) == doctest::Approx(0.0).epsilon(0.05).scale(1.0));
+    CHECK(measure(30.0, false, 0.0f) < -20.0);    // mains no longer carry deep bass
+    CHECK(measure(1000.0, false, 0.0f) > -0.1);   // nor lose the mid range
+    CHECK(measure(30.0, true, 6.0f) == doctest::Approx(6.0).epsilon(0.05).scale(1.0));
+}

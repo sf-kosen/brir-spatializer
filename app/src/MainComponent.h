@@ -42,6 +42,8 @@ private:
     void loadCinema(const juce::File& file);
     void rebuildConvolver();
     void applyUpmixSettings();
+    void applyHeadphoneEq();
+    void applyBassManagement();
     void saveSettings();
     void logDiagnostics();
     void showError(const juce::String& message);
@@ -49,12 +51,13 @@ private:
     juce::AudioDeviceManager deviceManager_;
     std::unique_ptr<juce::PropertiesFile> settings_;
 
+    juce::Label headphoneLabel_, bassLabel_;
     juce::Label inputLabel_, outputLabel_, cinemaTitle_, cinemaLabel_, gainLabel_, centerLabel_, surroundLabel_,
         statusLabel_;
-    juce::ComboBox inputBox_, cinemaBox_;
+    juce::ComboBox inputBox_, cinemaBox_, headphoneBox_;
     juce::TextButton refreshButton_, startButton_, loadButton_;
-    juce::ToggleButton bypassToggle_, upmixToggle_;
-    juce::Slider gainSlider_, centerSlider_, surroundSlider_;
+    juce::ToggleButton bypassToggle_, upmixToggle_, subToggle_;
+    juce::Slider gainSlider_, centerSlider_, surroundSlider_, bassSlider_, subSlider_;
     std::unique_ptr<juce::AudioDeviceSelectorComponent> outputSelector_;
     std::unique_ptr<juce::FileChooser> fileChooser_;
 
@@ -71,6 +74,7 @@ private:
     // Loaded cinema set: one BRIR pair per upmix feed, at cinemaRate_.
     brir::IrMatrix cinema_;
     double cinemaRate_ = 0.0;
+    bool cinemaHasLfe_ = false;
     juce::String cinemaName_;
     juce::Array<juce::File> cinemaFiles_; // entries of cinemaBox_
 

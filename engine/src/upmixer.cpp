@@ -180,10 +180,12 @@ void Upmixer::processFrame() noexcept
                 lcrC = std::cos(t * halfPi);
                 lcrR = std::sin(t * halfPi);
             }
-            // Only sound that is (nearly) identical in L and R, like dialogue, is
-            // moved to C; partially correlated material such as music keeps its
-            // stereo image. Weight by coherence^4 (corrected2 is coherence^2).
-            float toCentre = center * corrected2 * corrected2;
+            // The primary part is panned across L-C-R regardless of coherence:
+            // the ambience is already split off, and pairwise panning keeps the
+            // stereo width while centred music plays from C as in a cinema. A
+            // phantom centre from L/R alone colours the binaural render (mids
+            // up, presence down) because the calibration assumes C carries it.
+            float toCentre = center;
             float gL = std::sqrt((1.0f - toCentre) * stL * stL + toCentre * lcrL * lcrL);
             float gC = std::sqrt(toCentre) * lcrC;
             float gR = std::sqrt((1.0f - toCentre) * stR * stR + toCentre * lcrR * lcrR);
