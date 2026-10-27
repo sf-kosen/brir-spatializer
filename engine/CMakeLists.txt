@@ -3,6 +3,7 @@ add_library(brir_engine STATIC
     src/convolver.cpp
     src/spsc_ring.cpp
     src/clock_bridge.cpp
+    src/leveler.cpp
     src/limiter.cpp
     src/renderer.cpp
     src/upmixer.cpp

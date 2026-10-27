@@ -11,7 +11,7 @@
 
 // Single-window app: pick a capture source and an output device, load a cinema
 // set, and listen. The capture thread feeds a ClockBridge that the output device
-// callback drains into the renderer (upmix -> cinema BRIRs -> limiter).
+// callback drains into the renderer (upmix -> cinema BRIRs -> leveler -> limiter).
 class MainComponent : public juce::Component,
                       private juce::AudioIODeviceCallback,
                       private juce::ChangeListener,
@@ -56,7 +56,7 @@ private:
         statusLabel_;
     juce::ComboBox inputBox_, cinemaBox_, headphoneBox_;
     juce::TextButton refreshButton_, startButton_, loadButton_;
-    juce::ToggleButton bypassToggle_, upmixToggle_, subToggle_;
+    juce::ToggleButton bypassToggle_, upmixToggle_, subToggle_, levelerToggle_;
     juce::Slider gainSlider_, centerSlider_, surroundSlider_, bassSlider_, subSlider_;
     std::unique_ptr<juce::AudioDeviceSelectorComponent> outputSelector_;
     std::unique_ptr<juce::FileChooser> fileChooser_;

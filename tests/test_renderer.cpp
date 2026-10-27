@@ -1,3 +1,4 @@
+#include "brir/leveler.h"
 #include "brir/limiter.h"
 #include "brir/renderer.h"
 
@@ -75,6 +76,57 @@ TEST_CASE("limiter holds the ceiling and is transparent below it")
     int delay = fresh.latencySamples();
     for (std::size_t i = static_cast<std::size_t>(delay); i < quiet[0].size(); ++i)
         REQUIRE(quiet[0][i] == doctest::Approx(original[0][i - static_cast<std::size_t>(delay)]).epsilon(1e-6));
+}
+
+TEST_CASE("leveler lowers a loud passage to the threshold, holds, then recovers")
+{
+    brir::Leveler leveler(2, 48000.0, -2.0f, 30.0f, 1000.0f, 4.0f);
+    const float threshold = std::pow(10.0f, -2.0f / 20.0f);
+    auto peakOf = [](const Stereo& s, std::size_t from, std::size_t to) {
+        float peak = 0.0f;
+        for (const auto& ch : s)
+            for (std::size_t i = from; i < to; ++i) peak = std::max(peak, std::abs(ch[i]));
+        return peak;
+    };
+
+    // 2 s at +6 dBFS: settles at threshold / 2 (about -8 dB) and stays there.
+    Stereo loud = sine(96000, 2.0f);
+    inBlocks(loud, 480, [&](float* const* io, int n) { leveler.process(io, n); });
+    CHECK(leveler.currentGainDb() == doctest::Approx(20.0f * std::log10(threshold / 2.0f)).epsilon(0.01));
+    CHECK(peakOf(loud, 48000, 96000) <= threshold * 1.001f);
+
+    // Quiet afterwards: held for the hold time, then up at 4 dB/s.
+    Stereo quiet = sine(48000 * 4, 0.1f);
+    float afterHold = 0.0f;
+    inBlocks(quiet, 480, [&, done = 0](float* const* io, int n) mutable {
+        leveler.process(io, n);
+        done += n;
+        if (done == 43200) afterHold = leveler.currentGainDb(); // 0.9 s in: still held
+    });
+    CHECK(afterHold == doctest::Approx(20.0f * std::log10(threshold / 2.0f)).epsilon(0.01));
+    CHECK(leveler.currentGainDb() == doctest::Approx(0.0f).epsilon(1e-6)); // 8 dB back within 3 s
+
+    // Material below the threshold passes bit-exact.
+    brir::Leveler fresh(2, 48000.0);
+    Stereo below = sine(4800, 0.7f);
+    Stereo original = below;
+    inBlocks(below, 100, [&](float* const* io, int n) { fresh.process(io, n); });
+    CHECK(below == original);
+}
+
+TEST_CASE("disabled leveler recovers to unity without a jump")
+{
+    brir::Leveler leveler(2, 48000.0, -2.0f, 30.0f, 1000.0f, 4.0f);
+    Stereo loud = sine(48000, 2.0f);
+    inBlocks(loud, 480, [&](float* const* io, int n) { leveler.process(io, n); });
+    REQUIRE(leveler.currentGainDb() < -7.0f);
+    leveler.setEnabled(false);
+    Stereo still = sine(480, 2.0f);
+    inBlocks(still, 480, [&](float* const* io, int n) { leveler.process(io, n); });
+    CHECK(leveler.currentGainDb() < -7.0f); // 10 ms later: only 0.04 dB up
+    Stereo rest = sine(48000 * 3, 2.0f);
+    inBlocks(rest, 480, [&](float* const* io, int n) { leveler.process(io, n); });
+    CHECK(leveler.currentGainDb() == doctest::Approx(0.0f).epsilon(1e-6));
 }
 
 TEST_CASE("renderer output is the convolved input, delayed by its reported latency")

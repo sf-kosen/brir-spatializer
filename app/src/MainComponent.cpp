@@ -131,6 +131,7 @@ MainComponent::MainComponent()
     };
     bypassToggle_.setButtonText(jp("バイパス（素の音と比較）"));
     upmixToggle_.setButtonText(jp("アップミックス"));
+    levelerToggle_.setButtonText(jp("自動ヘッドルーム"));
     headphoneLabel_.setText(jp("イヤホン補正"), juce::dontSendNotification);
     headphoneBox_.addItem(jp("なし"), 1);
     headphoneBox_.addItem("final E3000", 2);
@@ -150,6 +151,8 @@ MainComponent::MainComponent()
         applyHeadphoneEq();
     };
     upmixToggle_.setToggleState(settings_->getBoolValue("upmix", true), juce::dontSendNotification);
+    // Lowers loud masters as a whole so the limiter only catches stray peaks.
+    levelerToggle_.setToggleState(settings_->getBoolValue("leveler", true), juce::dontSendNotification);
     subToggle_.setButtonText(jp("サブウーファー"));
     subToggle_.setToggleState(settings_->getBoolValue("subwoofer", true), juce::dontSendNotification);
     subSlider_.setRange(-6.0, 12.0, 0.5);
@@ -179,7 +182,7 @@ MainComponent::MainComponent()
 
     for (auto* c : std::initializer_list<juce::Component*>{
              &inputLabel_, &outputLabel_, &cinemaTitle_, &cinemaLabel_, &gainLabel_, &centerLabel_, &surroundLabel_,
-             &statusLabel_, &inputBox_, &cinemaBox_, &refreshButton_, &startButton_, &loadButton_, &bypassToggle_, &upmixToggle_,
+             &statusLabel_, &inputBox_, &cinemaBox_, &refreshButton_, &startButton_, &loadButton_, &bypassToggle_, &upmixToggle_, &levelerToggle_,
              &gainSlider_, &centerSlider_, &surroundSlider_, &headphoneLabel_, &headphoneBox_, &bassLabel_, &bassSlider_, &subToggle_, &subSlider_})
         addAndMakeVisible(c);
 
@@ -191,6 +194,10 @@ MainComponent::MainComponent()
     loadButton_.onClick = [this] { chooseCinema(); };
     bypassToggle_.onClick = [this] {
         if (renderer_) renderer_->setBypass(bypassToggle_.getToggleState());
+    };
+    levelerToggle_.onClick = [this] {
+        if (renderer_) renderer_->setLevelerEnabled(levelerToggle_.getToggleState());
+        settings_->setValue("leveler", levelerToggle_.getToggleState());
     };
     gainSlider_.onValueChange = [this] {
         if (renderer_) renderer_->setOutputGainDb(static_cast<float>(gainSlider_.getValue()));
@@ -285,6 +292,7 @@ void MainComponent::resized()
 
     auto controls = row(28);
     bypassToggle_.setBounds(controls.removeFromLeft(240));
+    levelerToggle_.setBounds(controls.removeFromLeft(160));
     gainLabel_.setBounds(controls.removeFromLeft(50));
     gainSlider_.setBounds(controls);
 
@@ -342,9 +350,9 @@ void MainComponent::startCapture()
     diagnostics_ = std::make_unique<juce::FileOutputStream>(log);
     if (diagnostics_->openedOk()) {
         *diagnostics_ << "seconds,running,fill_ms,target_ms,buffered_ms,gap_ms,margin_ms,drift_ppm,underruns,overflows,"
-                         "resyncs,capture_discontinuities,silence_fills,max_delivery_gap_ms,late_blocks,limiter_db,cpu,device_rate,"
+                         "resyncs,capture_discontinuities,silence_fills,max_delivery_gap_ms,late_blocks,leveler_db,limiter_db,cpu,device_rate,"
                          "device_block,input,output\n";
-        *diagnostics_ << "0,,,,,,,,,,,,,,,,," << juce::String(output->getCurrentSampleRate(), 0) << ","
+        *diagnostics_ << "0,,,,,,,,,,,,,,,,,," << juce::String(output->getCurrentSampleRate(), 0) << ","
                       << output->getCurrentBufferSizeSamples() << ",\"" << inputName << "\",\"" << output->getName()
                       << "\"\n";
         diagnostics_->flush();
@@ -494,6 +502,7 @@ void MainComponent::audioDeviceAboutToStart(juce::AudioIODevice* device)
         renderer_ = std::make_unique<brir::Renderer>(rate, kMaxRenderBlock);
         renderer_->setBypass(bypassToggle_.getToggleState());
         renderer_->setOutputGainDb(static_cast<float>(gainSlider_.getValue()));
+        renderer_->setLevelerEnabled(levelerToggle_.getToggleState());
         applyUpmixSettings();
         applyHeadphoneEq();
         applyBassManagement();
@@ -561,6 +570,7 @@ void MainComponent::logDiagnostics()
                   << juce::String(static_cast<juce::int64>(c.silenceFills)) << ","
                   << juce::String(capture_.takeMaxDeliveryGapMs(), 1) << ","
                   << juce::String(static_cast<juce::int64>(renderer_ ? renderer_->lateBlocks() : 0)) << ","
+                  << juce::String(renderer_ ? renderer_->levelerGainDb() : 0.0f, 1) << ","
                   << juce::String(renderer_ ? renderer_->limiterGainDb() : 0.0f, 1) << ","
                   << juce::String(deviceManager_.getCpuUsage() * 100.0, 1) << ","
                   << (output ? juce::String(output->getCurrentSampleRate(), 0) : juce::String()) << ","
@@ -605,6 +615,8 @@ void MainComponent::timerCallback()
         totalMs += blockMs + deviceMs + renderMs;
         if (bridge) text << jp("推定遅延（取り込み→出力）: 約 ") << juce::String(totalMs, 0) << " ms\n";
     }
+    if (renderer_ && renderer_->levelerGainDb() < -0.1f)
+        text << jp("自動ヘッドルーム: ") << juce::String(renderer_->levelerGainDb(), 1) << " dB   ";
     if (renderer_ && renderer_->limiterGainDb() < -0.1f)
         text << jp("リミッター作動中: ") << juce::String(renderer_->limiterGainDb(), 1) << " dB\n";
 

@@ -1,9 +1,12 @@
 // Renders a stereo audio file through the same chain as the app (upmix ->
-// cinema BRIRs -> limiter) into a binaural WAV, for listening and analysis.
+// cinema BRIRs -> leveler -> limiter) into a binaural WAV, for listening and analysis.
 //
-//   render_file <cinema.json> <input> <output.wav> [--no-upmix] [--center N] [--surround N] [--sub dB] [--feeds feeds.wav]
+//   render_file <cinema.json> <input> <output.wav> [--no-upmix] [--center N] [--surround N] [--sub dB]
+//               [--gain dB] [--no-leveler] [--feeds feeds.wav]
 //
 // --sub sets the subwoofer level when the set has an LFE feed (default +4 dB).
+// --gain is the output gain (the app's gain slider; default 0 dB).
+// --no-leveler turns the automatic headroom off, leaving only the limiter.
 // --feeds also writes the five upmix feeds (L C R Ls Rs) for analysis.
 
 #include "brir/renderer.h"
@@ -45,17 +48,19 @@ bool loadCinema(const juce::File& json, double rate, brir::IrMatrix& irs)
 int main(int argc, char** argv)
 {
     if (argc < 4) {
-        std::fprintf(stderr, "usage: render_file <cinema.json> <input> <output.wav> [--no-upmix] [--center N] [--surround N] [--sub dB]\n");
+        std::fprintf(stderr, "usage: render_file <cinema.json> <input> <output.wav> [--no-upmix] [--center N] [--surround N] [--sub dB] [--gain dB] [--no-leveler]\n");
         return 1;
     }
     juce::File cinema(juce::File::getCurrentWorkingDirectory().getChildFile(juce::String::fromUTF8(argv[1])));
     juce::File input(juce::File::getCurrentWorkingDirectory().getChildFile(juce::String::fromUTF8(argv[2])));
     juce::File output(juce::File::getCurrentWorkingDirectory().getChildFile(juce::String::fromUTF8(argv[3])));
-    bool upmix = true;
-    float center = 1.0f, surround = 0.3f, subDb = 4.0f;
+    bool upmix = true, leveler = true;
+    float center = 1.0f, surround = 0.3f, subDb = 4.0f, gainDb = 0.0f;
     juce::File feedsFile;
     for (int i = 4; i < argc; ++i) {
         if (std::strcmp(argv[i], "--no-upmix") == 0) upmix = false;
+        else if (std::strcmp(argv[i], "--no-leveler") == 0) leveler = false;
+        else if (std::strcmp(argv[i], "--gain") == 0 && i + 1 < argc) gainDb = std::stof(argv[++i]);
         else if (std::strcmp(argv[i], "--center") == 0 && i + 1 < argc) center = std::stof(argv[++i]) / 100.0f;
         else if (std::strcmp(argv[i], "--surround") == 0 && i + 1 < argc) surround = std::stof(argv[++i]) / 100.0f;
         else if (std::strcmp(argv[i], "--sub") == 0 && i + 1 < argc) subDb = std::stof(argv[++i]);
@@ -88,6 +93,8 @@ int main(int argc, char** argv)
     renderer.upmixer().setCenterAmount(center);
     renderer.upmixer().setSurroundAmount(surround);
     renderer.setBassManagement(!irs[brir::Renderer::kLfe][0].empty(), subDb);
+    renderer.setOutputGainDb(gainDb);
+    renderer.setLevelerEnabled(leveler);
     brir::ConvolverConfig config;
     config.threaded = false; // offline: deterministic, no deadlines
     renderer.setConvolver(std::make_unique<brir::Convolver>(brir::Renderer::kFeeds, 2, irs, config));
@@ -117,8 +124,9 @@ int main(int argc, char** argv)
         }
     }
 
-    int limitedBlocks = 0, blocks = 0;
-    float deepest = 0.0f;
+    int limitedBlocks = 0, leveledBlocks = 0, blocks = 0;
+    float deepest = 0.0f, deepestLevel = 0.0f;
+    double levelSum = 0.0;
     for (int pos = 0; pos < out.getNumSamples(); pos += block) {
         int n = std::min(block, out.getNumSamples() - pos);
         float* io[2] = {out.getWritePointer(0, pos), out.getWritePointer(1, pos)};
@@ -126,8 +134,14 @@ int main(int argc, char** argv)
         float gr = renderer.limiterGainDb();
         deepest = std::min(deepest, gr);
         limitedBlocks += gr < -0.1f ? 1 : 0;
+        float lv = renderer.levelerGainDb();
+        deepestLevel = std::min(deepestLevel, lv);
+        leveledBlocks += lv < -0.1f ? 1 : 0;
+        levelSum += lv;
         ++blocks;
     }
+    std::printf("Leveler active in %.1f%% of blocks, mean %.1f dB, deepest %.1f dB\n", 100.0 * leveledBlocks / blocks,
+                levelSum / blocks, deepestLevel);
     std::printf("Limiter active in %.1f%% of blocks, deepest %.1f dB\n", 100.0 * limitedBlocks / blocks, deepest);
 
     if (feeds.getNumChannels() > 0) {

@@ -38,6 +38,7 @@ Renderer::Renderer(double sampleRate, int maxBlockFrames)
       gainCoef_(static_cast<float>(1.0 - std::exp(-1000.0 / (kGainSmoothingMs * sampleRate)))),
       upmixer_(sampleRate),
       headphoneEq_(sampleRate),
+      leveler_(2, sampleRate),
       limiter_(2, sampleRate),
       lowpass_(butterworth(kCrossoverHz, sampleRate, false)),
       highpass_(butterworth(kCrossoverHz, sampleRate, true))
@@ -199,6 +200,9 @@ void Renderer::process(const float* const* input, float* const* output, int fram
     lateBlocks_.store(late, std::memory_order_relaxed);
 
     headphoneEq_.process(output, frames);
+    leveler_.setEnabled(levelerEnabled_.load(std::memory_order_relaxed));
+    leveler_.process(output, frames);
+    levelerGainDb_.store(leveler_.currentGainDb(), std::memory_order_relaxed);
     limiter_.process(output, frames);
     limiterGainDb_.store(limiter_.currentGainDb(), std::memory_order_relaxed);
 }
